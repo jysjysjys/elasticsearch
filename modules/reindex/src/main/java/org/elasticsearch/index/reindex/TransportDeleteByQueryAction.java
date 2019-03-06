@@ -27,13 +27,12 @@ import org.elasticsearch.client.ParentTaskAssigningClient;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.script.ScriptService;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
-import java.util.function.Supplier;
 
 public class TransportDeleteByQueryAction extends HandledTransportAction<DeleteByQueryRequest, BulkByScrollResponse> {
 
@@ -43,10 +42,10 @@ public class TransportDeleteByQueryAction extends HandledTransportAction<DeleteB
     private final ClusterService clusterService;
 
     @Inject
-    public TransportDeleteByQueryAction(Settings settings, ThreadPool threadPool, ActionFilters actionFilters, Client client,
+    public TransportDeleteByQueryAction(ThreadPool threadPool, ActionFilters actionFilters, Client client,
                                         TransportService transportService, ScriptService scriptService, ClusterService clusterService) {
-        super(settings, DeleteByQueryAction.NAME, transportService, actionFilters,
-            (Supplier<DeleteByQueryRequest>) DeleteByQueryRequest::new);
+        super(DeleteByQueryAction.NAME, transportService, actionFilters,
+            (Writeable.Reader<DeleteByQueryRequest>) DeleteByQueryRequest::new);
         this.threadPool = threadPool;
         this.client = client;
         this.scriptService = scriptService;
@@ -62,7 +61,7 @@ public class TransportDeleteByQueryAction extends HandledTransportAction<DeleteB
                 ClusterState state = clusterService.state();
                 ParentTaskAssigningClient assigningClient = new ParentTaskAssigningClient(client, clusterService.localNode(),
                     bulkByScrollTask);
-                new AsyncDeleteByQueryAction(bulkByScrollTask, logger, assigningClient, threadPool, request, scriptService, state,
+                new AsyncDeleteByQueryAction(bulkByScrollTask, logger, assigningClient, threadPool, this, request, scriptService,
                     listener).start();
             }
         );

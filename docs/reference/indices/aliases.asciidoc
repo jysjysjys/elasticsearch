@@ -145,11 +145,9 @@ exist in the mapping:
 PUT /test1
 {
   "mappings": {
-    "type1": {
-      "properties": {
-        "user" : {
-          "type": "keyword"
-        }
+    "properties": {
+      "user" : {
+        "type": "keyword"
       }
     }
   }
@@ -257,6 +255,9 @@ and there are multiple indices referenced by an alias, then writes will not be a
 It is possible to specify an index associated with an alias as a write index using both the aliases API
 and index creation API.
 
+Setting an index to be the write index with an alias also affects how the alias is manipulated during
+Rollover (see <<indices-rollover-index, Rollover With Write Index>>).
+
 [source,js]
 --------------------------------------------------
 POST /_aliases
@@ -268,12 +269,18 @@ POST /_aliases
                  "alias" : "alias1",
                  "is_write_index" : true
             }
+        },
+        {
+            "add" : {
+                 "index" : "test2",
+                 "alias" : "alias1"
+            }
         }
     ]
 }
 --------------------------------------------------
 // CONSOLE
-// TEST[s/^/PUT test\n/]
+// TEST[s/^/PUT test\nPUT test2\n/]
 
 In this example, we associate the alias `alias1` to both `test` and `test2`, where
 `test` will be the index chosen for writing to.
@@ -310,13 +317,13 @@ POST /_aliases
             "add" : {
                  "index" : "test",
                  "alias" : "alias1",
-                 "is_write_index" : true
+                 "is_write_index" : false
             }
         }, {
             "add" : {
                  "index" : "test2",
                  "alias" : "alias1",
-                 "is_write_index" : false
+                 "is_write_index" : true
             }
         }
     ]
@@ -376,10 +383,8 @@ First create the index and add a mapping for the `user_id` field:
 PUT /users
 {
     "mappings" : {
-        "user" : {
-            "properties" : {
-                "user_id" : {"type" : "integer"}
-            }
+        "properties" : {
+            "user_id" : {"type" : "integer"}
         }
     }
 }
@@ -416,10 +421,8 @@ Aliases can also be specified during <<create-index-aliases,index creation>>:
 PUT /logs_20162801
 {
     "mappings" : {
-        "type" : {
-            "properties" : {
-                "year" : {"type" : "integer"}
-            }
+        "properties" : {
+            "year" : {"type" : "integer"}
         }
     },
     "aliases" : {

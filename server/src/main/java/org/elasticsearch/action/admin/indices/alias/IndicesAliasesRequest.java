@@ -67,7 +67,7 @@ public class IndicesAliasesRequest extends AcknowledgedRequest<IndicesAliasesReq
     // indices options that require every specified index to exist, expand wildcards only to open
     // indices, don't allow that no indices are resolved from wildcard expressions and resolve the
     // expressions only against indices
-    private static final IndicesOptions INDICES_OPTIONS = IndicesOptions.fromOptions(false, false, true, false, true, false, true);
+    private static final IndicesOptions INDICES_OPTIONS = IndicesOptions.fromOptions(false, false, true, false, true, false, true, false);
 
     public IndicesAliasesRequest() {
     }
@@ -214,6 +214,7 @@ public class IndicesAliasesRequest extends AcknowledgedRequest<IndicesAliasesReq
         private final AliasActions.Type type;
         private String[] indices;
         private String[] aliases = Strings.EMPTY_ARRAY;
+        private String[] originalAliases = Strings.EMPTY_ARRAY;
         private String filter;
         private String routing;
         private String indexRouting;
@@ -238,6 +239,9 @@ public class IndicesAliasesRequest extends AcknowledgedRequest<IndicesAliasesReq
             if (in.getVersion().onOrAfter(Version.V_6_4_0)) {
                 writeIndex = in.readOptionalBoolean();
             }
+            if (in.getVersion().onOrAfter(Version.V_7_0_0)) {
+                originalAliases = in.readStringArray();
+            }
         }
 
         @Override
@@ -251,6 +255,9 @@ public class IndicesAliasesRequest extends AcknowledgedRequest<IndicesAliasesReq
             out.writeOptionalString(indexRouting);
             if (out.getVersion().onOrAfter(Version.V_6_4_0)) {
                 out.writeOptionalBoolean(writeIndex);
+            }
+            if (out.getVersion().onOrAfter(Version.V_7_0_0)) {
+                out.writeStringArray(originalAliases);
             }
         }
 
@@ -315,6 +322,7 @@ public class IndicesAliasesRequest extends AcknowledgedRequest<IndicesAliasesReq
                 }
             }
             this.aliases = aliases;
+            this.originalAliases = aliases;
             return this;
         }
 
@@ -329,6 +337,7 @@ public class IndicesAliasesRequest extends AcknowledgedRequest<IndicesAliasesReq
                 throw new IllegalArgumentException("[alias] can't be empty string");
             }
             this.aliases = new String[] {alias};
+            this.originalAliases = aliases;
             return this;
         }
 
@@ -433,6 +442,11 @@ public class IndicesAliasesRequest extends AcknowledgedRequest<IndicesAliasesReq
         }
 
         @Override
+        public String[] getOriginalAliases() {
+            return originalAliases;
+        }
+
+        @Override
         public boolean expandAliasesWildcards() {
             //remove operations support wildcards among aliases, add operations don't
             return type == Type.REMOVE;
@@ -472,6 +486,9 @@ public class IndicesAliasesRequest extends AcknowledgedRequest<IndicesAliasesReq
             if (false == Strings.isEmpty(searchRouting)) {
                 builder.field(SEARCH_ROUTING.getPreferredName(), searchRouting);
             }
+            if (null != writeIndex) {
+                builder.field(IS_WRITE_INDEX.getPreferredName(), writeIndex);
+            }
             builder.endObject();
             builder.endObject();
             return builder;
@@ -491,6 +508,7 @@ public class IndicesAliasesRequest extends AcknowledgedRequest<IndicesAliasesReq
                     + ",routing=" + routing
                     + ",indexRouting=" + indexRouting
                     + ",searchRouting=" + searchRouting
+                    + ",writeIndex=" + writeIndex
                     + "]";
         }
 
@@ -507,12 +525,13 @@ public class IndicesAliasesRequest extends AcknowledgedRequest<IndicesAliasesReq
                     && Objects.equals(filter, other.filter)
                     && Objects.equals(routing, other.routing)
                     && Objects.equals(indexRouting, other.indexRouting)
-                    && Objects.equals(searchRouting, other.searchRouting);
+                    && Objects.equals(searchRouting, other.searchRouting)
+                    && Objects.equals(writeIndex, other.writeIndex);
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(type, indices, aliases, filter, routing, indexRouting, searchRouting);
+            return Objects.hash(type, indices, aliases, filter, routing, indexRouting, searchRouting, writeIndex);
         }
     }
 
@@ -579,7 +598,7 @@ public class IndicesAliasesRequest extends AcknowledgedRequest<IndicesAliasesReq
         }, AliasActions.PARSER, new ParseField("actions"));
     }
 
-    public static IndicesAliasesRequest fromXContent(XContentParser parser) throws IOException {
+    public static IndicesAliasesRequest fromXContent(XContentParser parser) {
         return PARSER.apply(parser, null);
     }
 }

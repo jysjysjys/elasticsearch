@@ -19,7 +19,7 @@ import org.elasticsearch.common.xcontent.ToXContentObject;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.tasks.Task;
-import org.elasticsearch.xpack.core.ml.MLMetadataField;
+import org.elasticsearch.xpack.core.ml.MlTasks;
 import org.elasticsearch.xpack.core.ml.datafeed.DatafeedConfig;
 import org.elasticsearch.xpack.core.ml.utils.ExceptionsHelper;
 
@@ -46,7 +46,12 @@ public class IsolateDatafeedAction extends Action<IsolateDatafeedAction.Response
 
     @Override
     public Response newResponse() {
-        return new Response();
+        throw new UnsupportedOperationException("usage of Streamable is to be replaced by Writeable");
+    }
+
+    @Override
+    public Writeable.Reader<Response> getResponseReader() {
+        return Response::new;
     }
 
     public static class Request extends BaseTasksRequest<Request> implements ToXContentObject {
@@ -78,27 +83,8 @@ public class IsolateDatafeedAction extends Action<IsolateDatafeedAction.Response
         public Request() {
         }
 
-        public String getDatafeedId() {
-            return datafeedId;
-        }
-
-        @Override
-        public boolean match(Task task) {
-            String expectedDescription = MLMetadataField.datafeedTaskId(datafeedId);
-            if (task instanceof StartDatafeedAction.DatafeedTaskMatcher && expectedDescription.equals(task.getDescription())){
-                return true;
-            }
-            return false;
-        }
-
-        @Override
-        public ActionRequestValidationException validate() {
-            return null;
-        }
-
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
+        public Request(StreamInput in) throws IOException {
+            super(in);
             datafeedId = in.readString();
         }
 
@@ -106,6 +92,21 @@ public class IsolateDatafeedAction extends Action<IsolateDatafeedAction.Response
         public void writeTo(StreamOutput out) throws IOException {
             super.writeTo(out);
             out.writeString(datafeedId);
+        }
+
+        public String getDatafeedId() {
+            return datafeedId;
+        }
+
+        @Override
+        public boolean match(Task task) {
+            String expectedDescription = MlTasks.datafeedTaskId(datafeedId);
+            return task instanceof StartDatafeedAction.DatafeedTaskMatcher && expectedDescription.equals(task.getDescription());
+        }
+
+        @Override
+        public ActionRequestValidationException validate() {
+            return null;
         }
 
         @Override
@@ -136,7 +137,7 @@ public class IsolateDatafeedAction extends Action<IsolateDatafeedAction.Response
 
     public static class Response extends BaseTasksResponse implements Writeable {
 
-        private boolean isolated;
+        private final boolean isolated;
 
         public Response(boolean isolated) {
             super(null, null);
@@ -144,17 +145,7 @@ public class IsolateDatafeedAction extends Action<IsolateDatafeedAction.Response
         }
 
         public Response(StreamInput in) throws IOException {
-            super(null, null);
-            readFrom(in);
-        }
-
-        public Response() {
-            super(null, null);
-        }
-
-        @Override
-        public void readFrom(StreamInput in) throws IOException {
-            super.readFrom(in);
+            super(in);
             isolated = in.readBoolean();
         }
 

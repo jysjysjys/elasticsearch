@@ -23,7 +23,7 @@ The following snippet shows a simple slack action definition:
     "slack" : {
       "message" : {
         "to" : [ "#admins", "@chief-admin" ], <1>
-        "text" : "Encountered  {{ctx.payload.hits.total}} errors in the last 5 minutes (facepalm)" <2>
+        "text" : "Encountered  {{ctx.payload.hits.total.value}} errors in the last 5 minutes (facepalm)" <2>
       }
     }
   }
@@ -58,7 +58,7 @@ The following snippet shows a standard message attachment:
         "attachments" : [
           {
             "title" : "Errors Found",
-            "text" : "Encountered  {{ctx.payload.hits.total}} errors in the last 5 minutes (facepalm)",
+            "text" : "Encountered  {{ctx.payload.hits.total.value}} errors in the last 5 minutes (facepalm)",
             "color" : "danger"
           }
         ]
@@ -169,9 +169,9 @@ aggregation and the Slack action:
                                     more information, see
                                     <<slack-dynamic-attachment, Using Attachments to Format Slack Messages>>.
 
-| `proxy.host`      | no        | -       | The proxy host to use (only in combination with `proxy.port`)
+| `proxy.host`      | no        | The proxy host to use (only in combination with `proxy.port`)
 
-| `proxy.port`      | no        | -       | The proxy port to use (only in combination with `proxy.host`)
+| `proxy.port`      | no        | The proxy port to use (only in combination with `proxy.host`)
 |======
 
 [[configuring-slack]]

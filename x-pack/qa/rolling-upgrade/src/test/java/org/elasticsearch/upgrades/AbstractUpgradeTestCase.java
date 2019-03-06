@@ -5,6 +5,7 @@
  */
 package org.elasticsearch.upgrades;
 
+import org.elasticsearch.client.Request;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.concurrent.ThreadContext;
 import org.elasticsearch.test.SecuritySettingsSourceField;
@@ -34,6 +35,16 @@ public abstract class AbstractUpgradeTestCase extends ESRestTestCase {
 
     @Override
     protected boolean preserveTemplatesUponCompletion() {
+        return true;
+    }
+
+    @Override
+    protected boolean preserveRollupJobsUponCompletion() {
+        return true;
+    }
+
+    @Override
+    protected boolean preserveILMPoliciesUponCompletion() {
         return true;
     }
 
@@ -75,8 +86,11 @@ public abstract class AbstractUpgradeTestCase extends ESRestTestCase {
             boolean success = true;
             for (String template : templatesToWaitFor()) {
                 try {
-                    final boolean exists =
-                            adminClient().performRequest("HEAD", "_template/" + template).getStatusLine().getStatusCode() == 200;
+                    final Request headRequest = new Request("HEAD", "_template/" + template);
+                    headRequest.setOptions(allowTypesRemovalWarnings());
+                    final boolean exists = adminClient()
+                        .performRequest(headRequest)
+                            .getStatusLine().getStatusCode() == 200;
                     success &= exists;
                     logger.debug("template [{}] exists [{}]", template, exists);
                 } catch (IOException e) {

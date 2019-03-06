@@ -19,11 +19,12 @@
 
 package org.elasticsearch.repositories.blobstore;
 
-import org.elasticsearch.action.admin.cluster.repositories.put.PutRepositoryResponse;
 import org.elasticsearch.action.admin.cluster.snapshots.create.CreateSnapshotResponse;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.UUIDs;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.env.Environment;
 import org.elasticsearch.plugins.Plugin;
@@ -85,7 +86,7 @@ public class BlobStoreRepositoryTests extends ESSingleNodeTestCase {
         final String repositoryName = "test-repo";
 
         logger.info("-->  creating repository");
-        PutRepositoryResponse putRepositoryResponse =
+        AcknowledgedResponse putRepositoryResponse =
             client.admin().cluster().preparePutRepository(repositoryName)
                                     .setType(REPO_TYPE)
                                     .setSettings(Settings.builder().put(node().settings()).put("location", location))
@@ -123,7 +124,7 @@ public class BlobStoreRepositoryTests extends ESSingleNodeTestCase {
 
         logger.info("--> make sure the node's repository can resolve the snapshots");
         final RepositoriesService repositoriesService = getInstanceFromNode(RepositoriesService.class);
-        @SuppressWarnings("unchecked") final BlobStoreRepository repository =
+        final BlobStoreRepository repository =
             (BlobStoreRepository) repositoriesService.repository(repositoryName);
         final List<SnapshotId> originalSnapshots = Arrays.asList(snapshotId1, snapshotId2);
 
@@ -232,22 +233,42 @@ public class BlobStoreRepositoryTests extends ESSingleNodeTestCase {
         assertEquals(0, repository.getRepositoryData().getIncompatibleSnapshotIds().size());
     }
 
+    public void testBadChunksize() throws Exception {
+        final Client client = client();
+        final Path location = ESIntegTestCase.randomRepoPath(node().settings());
+        final String repositoryName = "test-repo";
+
+        expectThrows(RepositoryException.class, () ->
+            client.admin().cluster().preparePutRepository(repositoryName)
+                .setType(REPO_TYPE)
+                .setSettings(Settings.builder().put(node().settings())
+                    .put("location", location)
+                    .put("chunk_size", randomLongBetween(-10, 0), ByteSizeUnit.BYTES))
+                .get());
+    }
+
     private BlobStoreRepository setupRepo() {
         final Client client = client();
         final Path location = ESIntegTestCase.randomRepoPath(node().settings());
         final String repositoryName = "test-repo";
 
-        PutRepositoryResponse putRepositoryResponse =
+        Settings.Builder repoSettings = Settings.builder().put(node().settings()).put("location", location);
+        boolean compress = randomBoolean();
+        if (compress) {
+            repoSettings.put(BlobStoreRepository.COMPRESS_SETTING.getKey(), true);
+        }
+        AcknowledgedResponse putRepositoryResponse =
             client.admin().cluster().preparePutRepository(repositoryName)
                                     .setType(REPO_TYPE)
-                                    .setSettings(Settings.builder().put(node().settings()).put("location", location))
+                                    .setSettings(repoSettings)
                                     .get();
         assertThat(putRepositoryResponse.isAcknowledged(), equalTo(true));
 
         final RepositoriesService repositoriesService = getInstanceFromNode(RepositoriesService.class);
-        @SuppressWarnings("unchecked") final BlobStoreRepository repository =
+        final BlobStoreRepository repository =
             (BlobStoreRepository) repositoriesService.repository(repositoryName);
         assertThat("getBlobContainer has to be lazy initialized", repository.getBlobContainer(), nullValue());
+        assertEquals("Compress must be set to", compress, repository.isCompress());
         return repository;
     }
 

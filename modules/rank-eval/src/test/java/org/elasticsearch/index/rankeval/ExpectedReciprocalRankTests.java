@@ -19,6 +19,7 @@
 
 package org.elasticsearch.index.rankeval;
 
+import org.elasticsearch.action.OriginalIndices;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.text.Text;
@@ -29,7 +30,8 @@ import org.elasticsearch.common.xcontent.XContentParseException;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.common.xcontent.json.JsonXContent;
-import org.elasticsearch.index.Index;
+import org.elasticsearch.index.mapper.MapperService;
+import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.SearchShardTarget;
 import org.elasticsearch.test.ESTestCase;
@@ -76,10 +78,10 @@ public class ExpectedReciprocalRankTests extends ESTestCase {
         Integer[] relevanceRatings = new Integer[] { 3, 2, 0, 1};
         SearchHit[] hits = createSearchHits(rated, relevanceRatings);
         ExpectedReciprocalRank err = new ExpectedReciprocalRank(3, 0, 3);
-        assertEquals(0.8984375, err.evaluate("id", hits, rated).getQualityLevel(), DELTA);
+        assertEquals(0.8984375, err.evaluate("id", hits, rated).metricScore(), DELTA);
         // take 4th rank into window
         err = new ExpectedReciprocalRank(3, 0, 4);
-        assertEquals(0.8984375 + 0.00244140625, err.evaluate("id", hits, rated).getQualityLevel(), DELTA);
+        assertEquals(0.8984375 + 0.00244140625, err.evaluate("id", hits, rated).metricScore(), DELTA);
     }
 
     /**
@@ -102,11 +104,11 @@ public class ExpectedReciprocalRankTests extends ESTestCase {
         SearchHit[] hits = createSearchHits(rated, relevanceRatings);
         ExpectedReciprocalRank err = new ExpectedReciprocalRank(3, null, 4);
         EvalQueryQuality evaluation = err.evaluate("id", hits, rated);
-        assertEquals(0.875 + 0.00390625, evaluation.getQualityLevel(), DELTA);
+        assertEquals(0.875 + 0.00390625, evaluation.metricScore(), DELTA);
         assertEquals(1, ((ExpectedReciprocalRank.Detail) evaluation.getMetricDetails()).getUnratedDocs());
         // if we supply e.g. 2 as unknown docs rating, it should be the same as in the other test above
         err = new ExpectedReciprocalRank(3, 2, 4);
-        assertEquals(0.8984375 + 0.00244140625, err.evaluate("id", hits, rated).getQualityLevel(), DELTA);
+        assertEquals(0.8984375 + 0.00244140625, err.evaluate("id", hits, rated).metricScore(), DELTA);
     }
 
     private SearchHit[] createSearchHits(List<RatedDocument> rated, Integer[] relevanceRatings) {
@@ -115,8 +117,8 @@ public class ExpectedReciprocalRankTests extends ESTestCase {
             if (relevanceRatings[i] != null) {
                 rated.add(new RatedDocument("index", Integer.toString(i), relevanceRatings[i]));
             }
-            hits[i] = new SearchHit(i, Integer.toString(i), new Text("type"), Collections.emptyMap());
-            hits[i].shard(new SearchShardTarget("testnode", new Index("index", "uuid"), 0, null));
+            hits[i] = new SearchHit(i, Integer.toString(i), new Text(MapperService.SINGLE_MAPPING_NAME), Collections.emptyMap());
+            hits[i].shard(new SearchShardTarget("testnode", new ShardId("index", "uuid", 0), null, OriginalIndices.NONE));
         }
         return hits;
     }
@@ -126,7 +128,7 @@ public class ExpectedReciprocalRankTests extends ESTestCase {
      */
     public void testNoResults() throws Exception {
         ExpectedReciprocalRank err = new ExpectedReciprocalRank(5, 0, 10);
-        assertEquals(0.0, err.evaluate("id", new SearchHit[0], Collections.emptyList()).getQualityLevel(), DELTA);
+        assertEquals(0.0, err.evaluate("id", new SearchHit[0], Collections.emptyList()).metricScore(), DELTA);
     }
 
     public void testParseFromXContent() throws IOException {

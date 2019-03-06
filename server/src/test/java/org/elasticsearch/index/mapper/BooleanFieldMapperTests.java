@@ -52,7 +52,6 @@ import static org.hamcrest.Matchers.containsString;
 public class BooleanFieldMapperTests extends ESSingleNodeTestCase {
     private IndexService indexService;
     private DocumentMapperParser parser;
-    private DocumentMapperParser preEs6Parser;
 
     @Before
     public void setup() {
@@ -72,7 +71,7 @@ public class BooleanFieldMapperTests extends ESSingleNodeTestCase {
 
         DocumentMapper defaultMapper = parser.parse("type", new CompressedXContent(mapping));
 
-        ParsedDocument doc = defaultMapper.parse(SourceToParse.source("test", "type", "1", BytesReference
+        ParsedDocument doc = defaultMapper.parse(new SourceToParse("test", "type", "1", BytesReference
                 .bytes(XContentFactory.jsonBuilder()
                         .startObject()
                         .field("field", true)
@@ -101,7 +100,7 @@ public class BooleanFieldMapperTests extends ESSingleNodeTestCase {
                 .endObject().endObject());
 
         DocumentMapper defaultMapper = parser.parse("type", new CompressedXContent(mapping));
-        FieldMapper mapper = defaultMapper.mappers().getMapper("field");
+        Mapper mapper = defaultMapper.mappers().getMapper("field");
         XContentBuilder builder = XContentFactory.jsonBuilder().startObject();
         mapper.toXContent(builder, ToXContent.EMPTY_PARAMS);
         builder.endObject();
@@ -142,8 +141,8 @@ public class BooleanFieldMapperTests extends ESSingleNodeTestCase {
                     .field("field", randomFrom("off", "no", "0", "on", "yes", "1"))
                 .endObject());
         MapperParsingException ex = expectThrows(MapperParsingException.class,
-                () -> defaultMapper.parse(SourceToParse.source("test", "type", "1", source, XContentType.JSON)));
-        assertEquals("failed to parse [field]", ex.getMessage());
+                () -> defaultMapper.parse(new SourceToParse("test", "type", "1", source, XContentType.JSON)));
+        assertEquals("failed to parse field [field] of type [boolean] in document with id '1'", ex.getMessage());
     }
 
     public void testMultiFields() throws IOException {
@@ -165,7 +164,7 @@ public class BooleanFieldMapperTests extends ESSingleNodeTestCase {
                 .startObject()
                     .field("field", false)
                 .endObject());
-        ParsedDocument doc = mapper.parse(SourceToParse.source("test", "type", "1", source, XContentType.JSON));
+        ParsedDocument doc = mapper.parse(new SourceToParse("test", "type", "1", source, XContentType.JSON));
         assertNotNull(doc.rootDoc().getField("field.as_string"));
     }
 
@@ -188,7 +187,7 @@ public class BooleanFieldMapperTests extends ESSingleNodeTestCase {
 
         DocumentMapper defaultMapper = indexService.mapperService().documentMapperParser().parse("type", new CompressedXContent(mapping));
 
-        ParsedDocument parsedDoc = defaultMapper.parse(SourceToParse.source("test", "type", "1", BytesReference
+        ParsedDocument parsedDoc = defaultMapper.parse(new SourceToParse("test", "type", "1", BytesReference
                 .bytes(XContentFactory.jsonBuilder()
                         .startObject()
                         .field("bool1", true)
