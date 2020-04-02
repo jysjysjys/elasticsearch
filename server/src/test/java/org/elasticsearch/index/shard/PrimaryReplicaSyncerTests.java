@@ -80,9 +80,9 @@ public class PrimaryReplicaSyncerTests extends IndexShardTestCase {
         for (int i = 0; i < numDocs; i++) {
             // Index doc but not advance local checkpoint.
             shard.applyIndexOperationOnPrimary(Versions.MATCH_ANY, VersionType.INTERNAL,
-                new SourceToParse(shard.shardId().getIndexName(), "_doc", Integer.toString(i), new BytesArray("{}"), XContentType.JSON),
+                new SourceToParse(shard.shardId().getIndexName(), Integer.toString(i), new BytesArray("{}"), XContentType.JSON),
                 SequenceNumbers.UNASSIGNED_SEQ_NO, 0,
-                randomBoolean() ? IndexRequest.UNSET_AUTO_GENERATED_TIMESTAMP : randomNonNegativeLong(), true);
+                IndexRequest.UNSET_AUTO_GENERATED_TIMESTAMP, true);
         }
 
         long globalCheckPoint = numDocs > 0 ? randomIntBetween(0, numDocs - 1) : 0;
@@ -90,9 +90,9 @@ public class PrimaryReplicaSyncerTests extends IndexShardTestCase {
 
         String allocationId = shard.routingEntry().allocationId().getId();
         shard.updateShardState(shard.routingEntry(), shard.getPendingPrimaryTerm(), null, 1000L, Collections.singleton(allocationId),
-            new IndexShardRoutingTable.Builder(shard.shardId()).addShard(shard.routingEntry()).build(), Collections.emptySet());
+            new IndexShardRoutingTable.Builder(shard.shardId()).addShard(shard.routingEntry()).build());
         shard.updateLocalCheckpointForShard(allocationId, globalCheckPoint);
-        assertEquals(globalCheckPoint, shard.getGlobalCheckpoint());
+        assertEquals(globalCheckPoint, shard.getLastKnownGlobalCheckpoint());
 
         logger.info("Total ops: {}, global checkpoint: {}", numDocs, globalCheckPoint);
 
@@ -115,10 +115,16 @@ public class PrimaryReplicaSyncerTests extends IndexShardTestCase {
             assertThat(resyncRequest.getMaxSeenAutoIdTimestampOnPrimary(), equalTo(shard.getMaxSeenAutoIdTimestamp()));
         }
         if (syncNeeded && globalCheckPoint < numDocs - 1) {
-            int skippedOps = Math.toIntExact(globalCheckPoint + 1); // everything up to global checkpoint included
-            assertThat(resyncTask.getSkippedOperations(), equalTo(skippedOps));
-            assertThat(resyncTask.getResyncedOperations(), equalTo(numDocs - skippedOps));
-            assertThat(resyncTask.getTotalOperations(), equalTo(globalCheckPoint == numDocs - 1 ? 0 : numDocs));
+            if (shard.indexSettings.isSoftDeleteEnabled()) {
+                assertThat(resyncTask.getSkippedOperations(), equalTo(0));
+                assertThat(resyncTask.getResyncedOperations(), equalTo(resyncTask.getTotalOperations()));
+                assertThat(resyncTask.getTotalOperations(), equalTo(Math.toIntExact(numDocs - 1 - globalCheckPoint)));
+            } else {
+                int skippedOps = Math.toIntExact(globalCheckPoint + 1); // everything up to global checkpoint included
+                assertThat(resyncTask.getSkippedOperations(), equalTo(skippedOps));
+                assertThat(resyncTask.getResyncedOperations(), equalTo(numDocs - skippedOps));
+                assertThat(resyncTask.getTotalOperations(), equalTo(globalCheckPoint == numDocs - 1 ? 0 : numDocs));
+            }
         } else {
             assertThat(resyncTask.getSkippedOperations(), equalTo(0));
             assertThat(resyncTask.getResyncedOperations(), equalTo(0));
@@ -144,13 +150,13 @@ public class PrimaryReplicaSyncerTests extends IndexShardTestCase {
         for (int i = 0; i < numDocs; i++) {
             // Index doc but not advance local checkpoint.
             shard.applyIndexOperationOnPrimary(Versions.MATCH_ANY, VersionType.INTERNAL,
-                new SourceToParse(shard.shardId().getIndexName(), "_doc", Integer.toString(i), new BytesArray("{}"), XContentType.JSON),
+                new SourceToParse(shard.shardId().getIndexName(), Integer.toString(i), new BytesArray("{}"), XContentType.JSON),
                 SequenceNumbers.UNASSIGNED_SEQ_NO, 0, IndexRequest.UNSET_AUTO_GENERATED_TIMESTAMP, false);
         }
 
         String allocationId = shard.routingEntry().allocationId().getId();
         shard.updateShardState(shard.routingEntry(), shard.getPendingPrimaryTerm(), null, 1000L, Collections.singleton(allocationId),
-            new IndexShardRoutingTable.Builder(shard.shardId()).addShard(shard.routingEntry()).build(), Collections.emptySet());
+            new IndexShardRoutingTable.Builder(shard.shardId()).addShard(shard.routingEntry()).build());
 
         CountDownLatch syncCalledLatch = new CountDownLatch(1);
         PlainActionFuture<PrimaryReplicaSyncer.ResyncTask> fut = new PlainActionFuture<PrimaryReplicaSyncer.ResyncTask>() {

@@ -43,8 +43,8 @@ public class InternalMatrixStats extends InternalAggregation implements MatrixSt
 
     /** per shard ctor */
     InternalMatrixStats(String name, long count, RunningStats multiFieldStatsResults, MatrixStatsResults results,
-                                  List<PipelineAggregator> pipelineAggregators, Map<String, Object> metaData) {
-        super(name, pipelineAggregators, metaData);
+                                  List<PipelineAggregator> pipelineAggregators, Map<String, Object> metadata) {
+        super(name, pipelineAggregators, metadata);
         assert count >= 0;
         this.stats = multiFieldStatsResults;
         this.results = results;
@@ -233,14 +233,14 @@ public class InternalMatrixStats extends InternalAggregation implements MatrixSt
     }
 
     @Override
-    public InternalAggregation doReduce(List<InternalAggregation> aggregations, ReduceContext reduceContext) {
+    public InternalAggregation reduce(List<InternalAggregation> aggregations, ReduceContext reduceContext) {
         // merge stats across all shards
         List<InternalAggregation> aggs = new ArrayList<>(aggregations);
         aggs.removeIf(p -> ((InternalMatrixStats)p).stats == null);
 
         // return empty result iff all stats are null
         if (aggs.isEmpty()) {
-            return new InternalMatrixStats(name, 0, null, new MatrixStatsResults(), pipelineAggregators(), getMetaData());
+            return new InternalMatrixStats(name, 0, null, new MatrixStatsResults(), pipelineAggregators(), getMetadata());
         }
 
         RunningStats runningStats = new RunningStats();
@@ -250,18 +250,22 @@ public class InternalMatrixStats extends InternalAggregation implements MatrixSt
 
         if (reduceContext.isFinalReduce()) {
             MatrixStatsResults results = new MatrixStatsResults(runningStats);
-            return new InternalMatrixStats(name, results.getDocCount(), runningStats, results, pipelineAggregators(), getMetaData());
+            return new InternalMatrixStats(name, results.getDocCount(), runningStats, results, pipelineAggregators(), getMetadata());
         }
-        return new InternalMatrixStats(name, runningStats.docCount, runningStats, null, pipelineAggregators(), getMetaData());
+        return new InternalMatrixStats(name, runningStats.docCount, runningStats, null, pipelineAggregators(), getMetadata());
     }
 
     @Override
-    protected int doHashCode() {
-        return Objects.hash(stats, results);
+    public int hashCode() {
+        return Objects.hash(super.hashCode(), stats, results);
     }
 
     @Override
-    protected boolean doEquals(Object obj) {
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (obj == null || getClass() != obj.getClass()) return false;
+        if (super.equals(obj) == false) return false;
+
         InternalMatrixStats other = (InternalMatrixStats) obj;
         return Objects.equals(this.stats, other.stats) &&
             Objects.equals(this.results, other.results);

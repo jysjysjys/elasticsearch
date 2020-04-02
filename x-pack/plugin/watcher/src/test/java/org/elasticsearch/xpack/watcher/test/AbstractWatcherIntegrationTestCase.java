@@ -5,6 +5,8 @@
  */
 package org.elasticsearch.xpack.watcher.test;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.elasticsearch.action.admin.indices.alias.Alias;
 import org.elasticsearch.action.admin.indices.alias.get.GetAliasesResponse;
 import org.elasticsearch.action.admin.indices.create.CreateIndexResponse;
@@ -16,10 +18,9 @@ import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.analysis.common.CommonAnalysisPlugin;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
-import org.elasticsearch.cluster.metadata.MappingMetaData;
+import org.elasticsearch.cluster.metadata.MappingMetadata;
 import org.elasticsearch.cluster.routing.IndexRoutingTable;
 import org.elasticsearch.common.collect.Tuple;
-import org.elasticsearch.common.network.NetworkModule;
 import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
@@ -39,21 +40,21 @@ import org.elasticsearch.test.InternalTestCluster;
 import org.elasticsearch.test.disruption.ServiceDisruptionScheme;
 import org.elasticsearch.test.store.MockFSIndexStore;
 import org.elasticsearch.test.transport.MockTransportService;
-import org.elasticsearch.xpack.core.XPackClient;
 import org.elasticsearch.xpack.core.XPackSettings;
-import org.elasticsearch.xpack.core.security.SecurityField;
+import org.elasticsearch.xpack.core.ssl.SSLService;
 import org.elasticsearch.xpack.core.watcher.WatcherState;
-import org.elasticsearch.xpack.core.watcher.client.WatcherClient;
 import org.elasticsearch.xpack.core.watcher.execution.ExecutionState;
 import org.elasticsearch.xpack.core.watcher.execution.TriggeredWatchStoreField;
 import org.elasticsearch.xpack.core.watcher.history.HistoryStoreField;
 import org.elasticsearch.xpack.core.watcher.support.WatcherIndexTemplateRegistryField;
 import org.elasticsearch.xpack.core.watcher.support.xcontent.XContentSource;
+import org.elasticsearch.xpack.core.watcher.transport.actions.service.WatcherServiceRequestBuilder;
+import org.elasticsearch.xpack.core.watcher.transport.actions.stats.WatcherStatsRequestBuilder;
 import org.elasticsearch.xpack.core.watcher.transport.actions.stats.WatcherStatsResponse;
 import org.elasticsearch.xpack.core.watcher.watch.ClockMock;
 import org.elasticsearch.xpack.core.watcher.watch.Watch;
-import org.elasticsearch.xpack.indexlifecycle.IndexLifecycle;
-import org.elasticsearch.xpack.watcher.history.HistoryStore;
+import org.elasticsearch.xpack.ilm.IndexLifecycle;
+import org.elasticsearch.xpack.watcher.ClockHolder;
 import org.elasticsearch.xpack.watcher.notification.email.Authentication;
 import org.elasticsearch.xpack.watcher.notification.email.Email;
 import org.elasticsearch.xpack.watcher.notification.email.EmailService;
@@ -64,7 +65,6 @@ import org.hamcrest.Matcher;
 import org.junit.After;
 import org.junit.Before;
 
-import java.time.Clock;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
@@ -94,8 +94,9 @@ import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.core.Is.is;
 import static org.hamcrest.core.IsNot.not;
+import static org.mockito.Mockito.mock;
 
-@ClusterScope(scope = SUITE, numClientNodes = 0, transportClientRatio = 0, maxNumDataNodes = 3)
+@ClusterScope(scope = SUITE, numClientNodes = 0, maxNumDataNodes = 3)
 public abstract class AbstractWatcherIntegrationTestCase extends ESIntegTestCase {
 
     public static final String WATCHER_LANG = Script.DEFAULT_SCRIPT_LANG;
@@ -114,15 +115,10 @@ public abstract class AbstractWatcherIntegrationTestCase extends ESIntegTestCase
                 // watcher settings that should work despite randomization
                 .put("xpack.watcher.execution.scroll.size", randomIntBetween(1, 100))
                 .put("xpack.watcher.watch.scroll.size", randomIntBetween(1, 100))
-                .build();
-    }
-
-    @Override
-    protected Settings transportClientSettings() {
-        return Settings.builder()
-                .put("client.transport.sniff", false)
-                .put(NetworkModule.TRANSPORT_TYPE_KEY, SecurityField.NAME4)
-                .put(NetworkModule.HTTP_TYPE_KEY, SecurityField.NAME4)
+                .put("indices.lifecycle.history_index_enabled", false)
+                // SLM can cause timing issues during testsuite teardown: https://github.com/elastic/elasticsearch/issues/50302
+                // SLM is not required for tests extending from this base class and only add noise.
+                .put("xpack.slm.enabled", false)
                 .build();
     }
 
@@ -148,11 +144,6 @@ public abstract class AbstractWatcherIntegrationTestCase extends ESIntegTestCase
     @Override
     protected Collection<Class<? extends Plugin>> nodePlugins() {
         return pluginTypes();
-    }
-
-    @Override
-    protected Collection<Class<? extends Plugin>> transportClientPlugins() {
-        return nodePlugins();
     }
 
     protected List<Class<? extends Plugin>> pluginTypes() {
@@ -184,7 +175,7 @@ public abstract class AbstractWatcherIntegrationTestCase extends ESIntegTestCase
     public void _setup() throws Exception {
         if (timeWarped()) {
             timeWarp = new TimeWarp(internalCluster().getInstances(ScheduleTriggerEngineMock.class),
-                    (ClockMock)getInstanceFromMaster(Clock.class));
+                    (ClockMock)getInstanceFromMaster(ClockHolder.class).clock);
         }
 
         if (internalCluster().size() > 0) {
@@ -235,7 +226,7 @@ public abstract class AbstractWatcherIntegrationTestCase extends ESIntegTestCase
 
                 // Now replace it with a randomly named index
                 watchIndexName = randomAlphaOfLengthBetween(5,10).toLowerCase(Locale.ROOT);
-                replaceWatcherIndexWithRandomlyNamedIndex(Watch.INDEX, watchIndexName, Watch.DOC_TYPE);
+                replaceWatcherIndexWithRandomlyNamedIndex(Watch.INDEX, watchIndexName);
 
                 logger.info("set alias for .watches index to [{}]", watchIndexName);
             } else {
@@ -259,8 +250,7 @@ public abstract class AbstractWatcherIntegrationTestCase extends ESIntegTestCase
                 // Now replace it with a randomly-named index
                 triggeredWatchIndexName = randomValueOtherThan(watchIndexName,
                     () -> randomAlphaOfLengthBetween(5,10).toLowerCase(Locale.ROOT));
-                replaceWatcherIndexWithRandomlyNamedIndex(TriggeredWatchStoreField.INDEX_NAME, triggeredWatchIndexName,
-                    TriggeredWatchStoreField.DOC_TYPE);
+                replaceWatcherIndexWithRandomlyNamedIndex(TriggeredWatchStoreField.INDEX_NAME, triggeredWatchIndexName);
                 logger.info("set alias for .triggered-watches index to [{}]", triggeredWatchIndexName);
             } else {
                 triggeredWatchIndexName = TriggeredWatchStoreField.INDEX_NAME;
@@ -274,9 +264,9 @@ public abstract class AbstractWatcherIntegrationTestCase extends ESIntegTestCase
         }
     }
 
-    public void replaceWatcherIndexWithRandomlyNamedIndex(String originalIndexOrAlias, String to, String docType) {
+    public void replaceWatcherIndexWithRandomlyNamedIndex(String originalIndexOrAlias, String to) {
         GetIndexResponse index = client().admin().indices().prepareGetIndex().setIndices(originalIndexOrAlias).get();
-        MappingMetaData mapping = index.getMappings().get(index.getIndices()[0]).get(docType);
+        MappingMetadata mapping = index.getMappings().get(index.getIndices()[0]);
 
         Settings settings = index.getSettings().get(index.getIndices()[0]);
         Settings.Builder newSettings = Settings.builder().put(settings);
@@ -286,14 +276,14 @@ public abstract class AbstractWatcherIntegrationTestCase extends ESIntegTestCase
         newSettings.remove("index.version.created");
 
         CreateIndexResponse createIndexResponse = client().admin().indices().prepareCreate(to)
-            .addMapping(docType, mapping.sourceAsMap())
+            .setMapping(mapping.sourceAsMap())
             .setSettings(newSettings)
             .get();
         assertTrue(createIndexResponse.isAcknowledged());
         ensureGreen(to);
 
         AtomicReference<String> originalIndex = new AtomicReference<>(originalIndexOrAlias);
-        boolean watchesIsAlias = client().admin().indices().prepareAliasesExist(originalIndexOrAlias).get().isExists();
+        boolean watchesIsAlias = client().admin().indices().prepareGetAliases(originalIndexOrAlias).get().getAliases().isEmpty() == false;
         if (watchesIsAlias) {
             GetAliasesResponse aliasesResponse = client().admin().indices().prepareGetAliases(originalIndexOrAlias).get();
             assertEquals(1, aliasesResponse.getAliases().size());
@@ -315,22 +305,18 @@ public abstract class AbstractWatcherIntegrationTestCase extends ESIntegTestCase
         return false;
     }
 
-    protected long docCount(String index, String type, QueryBuilder query) {
+    protected long docCount(String index, QueryBuilder query) {
         refresh();
-        return docCount(index, type, SearchSourceBuilder.searchSource().query(query));
+        return docCount(index, SearchSourceBuilder.searchSource().query(query));
     }
 
     protected long watchRecordCount(QueryBuilder query) {
         refresh();
-        return docCount(HistoryStoreField.INDEX_PREFIX_WITH_TEMPLATE + "*",
-                HistoryStore.DOC_TYPE, SearchSourceBuilder.searchSource().query(query));
+        return docCount(HistoryStoreField.INDEX_PREFIX_WITH_TEMPLATE + "*", SearchSourceBuilder.searchSource().query(query));
     }
 
-    protected long docCount(String index, String type, SearchSourceBuilder source) {
+    protected long docCount(String index, SearchSourceBuilder source) {
         SearchRequestBuilder builder = client().prepareSearch(index).setSource(source).setSize(0);
-        if (type != null) {
-            builder.setTypes(type);
-        }
         return builder.get().getHits().getTotalHits().value;
     }
 
@@ -344,10 +330,6 @@ public abstract class AbstractWatcherIntegrationTestCase extends ESIntegTestCase
 
     protected WatchParser watchParser() {
         return getInstanceFromMaster(WatchParser.class);
-    }
-
-    protected WatcherClient watcherClient() {
-        return randomBoolean() ? new XPackClient(client()).watcher() : new WatcherClient(client());
     }
 
     private IndexNameExpressionResolver indexNameExpressionResolver() {
@@ -407,7 +389,7 @@ public abstract class AbstractWatcherIntegrationTestCase extends ESIntegTestCase
 
     protected SearchResponse searchWatchRecords(Consumer<SearchRequestBuilder> requestBuilderCallback) {
         SearchRequestBuilder builder =
-                client().prepareSearch(HistoryStoreField.INDEX_PREFIX_WITH_TEMPLATE + "*").setTypes(HistoryStore.DOC_TYPE);
+                client().prepareSearch(HistoryStoreField.INDEX_PREFIX_WITH_TEMPLATE + "*");
         requestBuilderCallback.accept(builder);
         return builder.get();
     }
@@ -494,7 +476,7 @@ public abstract class AbstractWatcherIntegrationTestCase extends ESIntegTestCase
 
     protected void startWatcher() throws Exception {
         assertBusy(() -> {
-            WatcherStatsResponse watcherStatsResponse = watcherClient().prepareWatcherStats().get();
+            WatcherStatsResponse watcherStatsResponse = new WatcherStatsRequestBuilder(client()).get();
             assertThat(watcherStatsResponse.hasFailures(), is(false));
             List<Tuple<String, WatcherState>> currentStatesFromStatsRequest = watcherStatsResponse.getNodes().stream()
                     .map(response -> Tuple.tuple(response.getNode().getName(), response.getWatcherState()))
@@ -515,7 +497,7 @@ public abstract class AbstractWatcherIntegrationTestCase extends ESIntegTestCase
 
             boolean isAllStateStopped = states.stream().allMatch(w -> w == WatcherState.STOPPED);
             if (isAllStateStopped) {
-                assertAcked(watcherClient().prepareWatchService().start().get());
+                assertAcked(new WatcherServiceRequestBuilder(client()).start().get());
                 throw new AssertionError("all nodes are stopped, restarting");
             }
 
@@ -538,18 +520,20 @@ public abstract class AbstractWatcherIntegrationTestCase extends ESIntegTestCase
 
     protected void stopWatcher() throws Exception {
         assertBusy(() -> {
-            WatcherStatsResponse watcherStatsResponse = watcherClient().prepareWatcherStats().get();
+            WatcherStatsResponse watcherStatsResponse = new WatcherStatsRequestBuilder(client()).get();
             assertThat(watcherStatsResponse.hasFailures(), is(false));
             List<Tuple<String, WatcherState>> currentStatesFromStatsRequest = watcherStatsResponse.getNodes().stream()
-                    .map(response -> Tuple.tuple(response.getNode().getName(), response.getWatcherState()))
-                    .collect(Collectors.toList());
+                    .map(response -> Tuple.tuple(response.getNode().getName() + " (" + response.getThreadPoolQueueSize() + ")",
+                        response.getWatcherState())).collect(Collectors.toList());
             List<WatcherState> states = currentStatesFromStatsRequest.stream().map(Tuple::v2).collect(Collectors.toList());
+
+
 
             logger.info("waiting to stop watcher, current states {}", currentStatesFromStatsRequest);
 
             boolean isAllStateStarted = states.stream().allMatch(w -> w == WatcherState.STARTED);
             if (isAllStateStarted) {
-                assertAcked(watcherClient().prepareWatchService().stop().get());
+                assertAcked(new WatcherServiceRequestBuilder(client()).stop().get());
                 throw new AssertionError("all nodes are started, stopping");
             }
 
@@ -569,13 +553,14 @@ public abstract class AbstractWatcherIntegrationTestCase extends ESIntegTestCase
             }
 
             throw new AssertionError("unexpected state, retrying with next run");
-        });
+        }, 60, TimeUnit.SECONDS);
     }
 
     public static class NoopEmailService extends EmailService {
 
         public NoopEmailService() {
-            super(Settings.EMPTY, null, new ClusterSettings(Settings.EMPTY, new HashSet<>(EmailService.getSettings())));
+            super(Settings.EMPTY, null, mock(SSLService.class),
+                new ClusterSettings(Settings.EMPTY, new HashSet<>(EmailService.getSettings())));
         }
 
         @Override
@@ -585,6 +570,7 @@ public abstract class AbstractWatcherIntegrationTestCase extends ESIntegTestCase
     }
 
     protected static class TimeWarp {
+        private static final Logger logger = LogManager.getLogger(TimeWarp.class);
 
         private final List<ScheduleTriggerEngineMock> schedulers;
         private final ClockMock clock;
@@ -603,9 +589,14 @@ public abstract class AbstractWatcherIntegrationTestCase extends ESIntegTestCase
         }
 
         public void trigger(String watchId, int times, TimeValue timeValue) {
-            boolean isTriggered = schedulers.stream().anyMatch(scheduler -> scheduler.trigger(watchId, times, timeValue));
-            String msg = String.format(Locale.ROOT, "could not find watch [%s] to trigger", watchId);
-            assertThat(msg, isTriggered, is(true));
+            long triggeredCount = schedulers.stream()
+                .filter(scheduler -> scheduler.trigger(watchId, times, timeValue))
+                .count();
+            String msg = String.format(Locale.ROOT, "watch was triggered on [%d] schedulers, expected [1]", triggeredCount);
+            if (triggeredCount > 1) {
+                logger.warn(msg);
+            }
+            assertThat(msg, triggeredCount, greaterThanOrEqualTo(1L));
         }
     }
 
@@ -636,13 +627,13 @@ public abstract class AbstractWatcherIntegrationTestCase extends ESIntegTestCase
         @Override
         public synchronized void applyToNode(String node, InternalTestCluster cluster) {
             if (frozen) {
-                ((ClockMock)cluster.getInstance(Clock.class, node)).freeze();
+                ((ClockMock)cluster.getInstance(ClockHolder.class, node).clock).freeze();
             }
         }
 
         @Override
         public void removeFromNode(String node, InternalTestCluster cluster) {
-            ((ClockMock)cluster.getInstance(Clock.class, node)).unfreeze();
+            ((ClockMock)cluster.getInstance(ClockHolder.class, node).clock).unfreeze();
         }
 
         @Override

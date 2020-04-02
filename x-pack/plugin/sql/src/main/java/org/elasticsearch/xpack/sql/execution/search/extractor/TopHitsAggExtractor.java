@@ -9,11 +9,15 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.search.aggregations.bucket.MultiBucketsAggregation.Bucket;
 import org.elasticsearch.search.aggregations.metrics.InternalTopHits;
+import org.elasticsearch.xpack.ql.execution.search.extractor.BucketExtractor;
+import org.elasticsearch.xpack.ql.type.DataType;
 import org.elasticsearch.xpack.sql.SqlIllegalArgumentException;
-import org.elasticsearch.xpack.sql.type.DataType;
+import org.elasticsearch.xpack.sql.common.io.SqlStreamInput;
+import org.elasticsearch.xpack.sql.type.SqlDataTypes;
 import org.elasticsearch.xpack.sql.util.DateUtils;
 
 import java.io.IOException;
+import java.time.ZoneId;
 import java.util.Objects;
 
 public class TopHitsAggExtractor implements BucketExtractor {
@@ -22,25 +26,36 @@ public class TopHitsAggExtractor implements BucketExtractor {
 
     private final String name;
     private final DataType fieldDataType;
+    private final ZoneId zoneId;
 
-    public TopHitsAggExtractor(String name, DataType fieldDataType) {
+    public TopHitsAggExtractor(String name, DataType fieldDataType, ZoneId zoneId) {
         this.name = name;
         this.fieldDataType = fieldDataType;
+        this.zoneId = zoneId;
     }
 
     TopHitsAggExtractor(StreamInput in) throws IOException {
         name = in.readString();
-        fieldDataType = in.readEnum(DataType.class);
+        fieldDataType = SqlDataTypes.fromTypeName(in.readString());
+        zoneId = SqlStreamInput.asSqlStream(in).zoneId();
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         out.writeString(name);
-        out.writeEnum(fieldDataType);
+        out.writeString(fieldDataType.typeName());
     }
 
     String name() {
         return name;
+    }
+
+    DataType fieldDataType() {
+        return fieldDataType;
+    }
+
+    ZoneId zoneId() {
+        return zoneId;
     }
 
     @Override
@@ -60,8 +75,10 @@ public class TopHitsAggExtractor implements BucketExtractor {
         }
 
         Object value = agg.getHits().getAt(0).getFields().values().iterator().next().getValue();
-        if (fieldDataType.isDateBased()) {
-            return DateUtils.asDateTime(Long.parseLong(value.toString()));
+        if (SqlDataTypes.isDateBased(fieldDataType)) {
+            return DateUtils.asDateTime(Long.parseLong(value.toString()), zoneId);
+        } else if (SqlDataTypes.isTimeBased(fieldDataType)) {
+            return DateUtils.asTimeOnly(Long.parseLong(value.toString()), zoneId);
         } else {
             return value;
         }
@@ -69,7 +86,7 @@ public class TopHitsAggExtractor implements BucketExtractor {
 
     @Override
     public int hashCode() {
-        return Objects.hash(name, fieldDataType);
+        return Objects.hash(name, fieldDataType, zoneId);
     }
 
     @Override
@@ -84,11 +101,12 @@ public class TopHitsAggExtractor implements BucketExtractor {
 
         TopHitsAggExtractor other = (TopHitsAggExtractor) obj;
         return Objects.equals(name, other.name)
-            && Objects.equals(fieldDataType, other.fieldDataType);
+            && Objects.equals(fieldDataType, other.fieldDataType)
+            && Objects.equals(zoneId, other.zoneId);
     }
 
     @Override
     public String toString() {
-        return "TopHits>" + name + "[" + fieldDataType + "]";
+        return "TopHits>" + name + "[" + fieldDataType + "]@" + zoneId;
     }
 }

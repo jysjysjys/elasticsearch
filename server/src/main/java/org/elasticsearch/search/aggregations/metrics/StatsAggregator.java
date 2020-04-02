@@ -49,11 +49,10 @@ class StatsAggregator extends NumericMetricsAggregator.MultiValue {
     DoubleArray mins;
     DoubleArray maxes;
 
-
     StatsAggregator(String name, ValuesSource.Numeric valuesSource, DocValueFormat format,
                         SearchContext context, Aggregator parent,
-                        List<PipelineAggregator> pipelineAggregators, Map<String, Object> metaData) throws IOException {
-        super(name, context, parent, pipelineAggregators, metaData);
+                        List<PipelineAggregator> pipelineAggregators, Map<String, Object> metadata) throws IOException {
+        super(name, context, parent, pipelineAggregators, metadata);
         this.valuesSource = valuesSource;
         if (valuesSource != null) {
             final BigArrays bigArrays = context.bigArrays();
@@ -81,6 +80,8 @@ class StatsAggregator extends NumericMetricsAggregator.MultiValue {
         }
         final BigArrays bigArrays = context.bigArrays();
         final SortedNumericDoubleValues values = valuesSource.doubleValues(ctx);
+        final CompensatedSum kahanSummation = new CompensatedSum(0, 0);
+
         return new LeafBucketCollectorBase(sub, values) {
             @Override
             public void collect(int doc, long bucket) throws IOException {
@@ -105,22 +106,16 @@ class StatsAggregator extends NumericMetricsAggregator.MultiValue {
                     // accurate than naive summation.
                     double sum = sums.get(bucket);
                     double compensation = compensations.get(bucket);
+                    kahanSummation.reset(sum, compensation);
 
                     for (int i = 0; i < valuesCount; i++) {
                         double value = values.nextValue();
-                        if (Double.isFinite(value) == false) {
-                            sum += value;
-                        } else if (Double.isFinite(sum)) {
-                            double corrected = value - compensation;
-                            double newSum = sum + corrected;
-                            compensation = (newSum - sum) - corrected;
-                            sum = newSum;
-                        }
+                        kahanSummation.add(value);
                         min = Math.min(min, value);
                         max = Math.max(max, value);
                     }
-                    sums.set(bucket, sum);
-                    compensations.set(bucket, compensation);
+                    sums.set(bucket, kahanSummation.value());
+                    compensations.set(bucket, kahanSummation.delta());
                     mins.set(bucket, min);
                     maxes.set(bucket, max);
                 }
@@ -168,12 +163,12 @@ class StatsAggregator extends NumericMetricsAggregator.MultiValue {
             return buildEmptyAggregation();
         }
         return new InternalStats(name, counts.get(bucket), sums.get(bucket), mins.get(bucket),
-                maxes.get(bucket), format, pipelineAggregators(), metaData());
+                maxes.get(bucket), format, pipelineAggregators(), metadata());
     }
 
     @Override
     public InternalAggregation buildEmptyAggregation() {
-        return new InternalStats(name, 0, 0, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, format, pipelineAggregators(), metaData());
+        return new InternalStats(name, 0, 0, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, format, pipelineAggregators(), metadata());
     }
 
     @Override

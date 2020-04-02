@@ -6,20 +6,19 @@
 
 package org.elasticsearch.xpack.sql.expression.function.scalar.datetime;
 
-import org.elasticsearch.xpack.sql.expression.Expression;
-import org.elasticsearch.xpack.sql.expression.Expressions.ParamOrdinal;
-import org.elasticsearch.xpack.sql.expression.function.scalar.UnaryScalarFunction;
-import org.elasticsearch.xpack.sql.tree.NodeInfo;
-import org.elasticsearch.xpack.sql.tree.Source;
+import org.elasticsearch.xpack.ql.expression.Expression;
+import org.elasticsearch.xpack.ql.expression.Expressions.ParamOrdinal;
+import org.elasticsearch.xpack.ql.expression.function.scalar.UnaryScalarFunction;
+import org.elasticsearch.xpack.ql.tree.NodeInfo;
+import org.elasticsearch.xpack.ql.tree.Source;
 
 import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.util.Objects;
 
-import static org.elasticsearch.xpack.sql.expression.TypeResolutions.isDate;
+import static org.elasticsearch.xpack.sql.expression.SqlTypeResolutions.isDate;
 
 abstract class BaseDateTimeFunction extends UnaryScalarFunction {
-    
+
     private final ZoneId zoneId;
 
     BaseDateTimeFunction(Source source, Expression field, ZoneId zoneId) {
@@ -50,16 +49,13 @@ abstract class BaseDateTimeFunction extends UnaryScalarFunction {
 
     @Override
     public Object fold() {
-        ZonedDateTime folded = (ZonedDateTime) field().fold();
-        if (folded == null) {
-            return null;
-        }
-
-        return doFold(folded.withZoneSameInstant(zoneId));
+        return makeProcessor().process(field().fold());
     }
 
-    protected abstract Object doFold(ZonedDateTime dateTime);
-    
+    @Override
+    public int hashCode() {
+        return Objects.hash(getClass(), field(), zoneId());
+    }
 
     @Override
     public boolean equals(Object obj) {
@@ -68,11 +64,6 @@ abstract class BaseDateTimeFunction extends UnaryScalarFunction {
         }
         BaseDateTimeFunction other = (BaseDateTimeFunction) obj;
         return Objects.equals(other.field(), field())
-                && Objects.equals(other.zoneId(), zoneId());
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(field(), zoneId());
+            && Objects.equals(other.zoneId(), zoneId());
     }
 }

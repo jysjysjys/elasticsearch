@@ -33,8 +33,8 @@ public class InternalDerivative extends InternalSimpleValue implements Derivativ
     private final double normalizationFactor;
 
     InternalDerivative(String name, double value, double normalizationFactor, DocValueFormat formatter,
-            List<PipelineAggregator> pipelineAggregators, Map<String, Object> metaData) {
-        super(name, value, formatter, pipelineAggregators, metaData);
+            List<PipelineAggregator> pipelineAggregators, Map<String, Object> metadata) {
+        super(name, value, formatter, pipelineAggregators, metadata);
         this.normalizationFactor = normalizationFactor;
     }
 
@@ -98,12 +98,15 @@ public class InternalDerivative extends InternalSimpleValue implements Derivativ
     }
 
     @Override
-    protected int doHashCode() {
-        return Objects.hash(normalizationFactor, value);
+    public int hashCode() {
+        return Objects.hash(super.hashCode(), normalizationFactor, value);
     }
 
     @Override
-    protected boolean doEquals(Object obj) {
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (obj == null || getClass() != obj.getClass()) return false;
+        if (super.equals(obj) == false) return false;
         InternalDerivative other = (InternalDerivative) obj;
         return Objects.equals(value, other.value)
                 && Objects.equals(normalizationFactor, other.normalizationFactor);

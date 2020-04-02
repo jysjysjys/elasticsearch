@@ -81,7 +81,7 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
                 .createParser(NamedXContentRegistry.EMPTY, DeprecationHandler.THROW_UNSUPPORTED_OPERATION, FUTURE_JOB);
         XContentParseException e = expectThrows(XContentParseException.class,
                 () -> Job.STRICT_PARSER.apply(parser, null).build());
-        assertEquals("[4:5] [job_details] unknown field [tomorrows_technology_today], parser not found", e.getMessage());
+        assertEquals("[4:5] [job_details] unknown field [tomorrows_technology_today]", e.getMessage());
     }
 
     public void testFutureMetadataParse() throws IOException {
@@ -109,6 +109,7 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
         assertNull(job.getResultsRetentionDays());
         assertNotNull(job.allInputFields());
         assertFalse(job.allInputFields().isEmpty());
+        assertFalse(job.allowLazyOpen());
     }
 
     public void testNoId() {
@@ -513,6 +514,20 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
         assertEquals(e.getMessage(), "job and group names must be unique but job [foo] and group [foo] have the same name");
     }
 
+    public void testInvalidAnalysisConfig_duplicateDetectors() throws Exception {
+        Job.Builder builder =
+            new Job.Builder("job_with_duplicate_detectors")
+                .setCreateTime(new Date())
+                .setDataDescription(new DataDescription.Builder())
+                .setAnalysisConfig(new AnalysisConfig.Builder(Arrays.asList(
+                    new Detector.Builder("mean", "responsetime").build(),
+                    new Detector.Builder("mean", "responsetime").build()
+                )));
+
+        IllegalArgumentException e = expectThrows(IllegalArgumentException.class, builder::validateDetectorsAreUnique);
+        assertThat(e.getMessage(), containsString("Duplicate detectors are not allowed: [mean(responsetime)]"));
+    }
+
     public void testEarliestValidTimestamp_GivenEmptyDataCounts() {
         assertThat(createRandomizedJob().earliestValidTimestamp(new DataCounts("foo")), equalTo(0L));
     }
@@ -625,6 +640,9 @@ public class JobTests extends AbstractSerializingTestCase<Job> {
         }
         if (randomBoolean()) {
             builder.setResultsIndexName(randomValidJobId());
+        }
+        if (randomBoolean()) {
+            builder.setAllowLazyOpen(randomBoolean());
         }
         return builder.build();
     }

@@ -21,19 +21,14 @@ package org.elasticsearch.search.aggregations.pipeline;
 
 import com.carrotsearch.hppc.DoubleArrayList;
 
-import org.elasticsearch.Version;
 import org.elasticsearch.common.ParseField;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
-import org.elasticsearch.search.aggregations.AggregationBuilder;
-import org.elasticsearch.search.aggregations.AggregatorFactory;
-import org.elasticsearch.search.aggregations.PipelineAggregationBuilder;
 
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Map;
 import java.util.Objects;
 
@@ -57,19 +52,13 @@ public class PercentilesBucketPipelineAggregationBuilder
             throws IOException {
         super(in, NAME);
         percents = in.readDoubleArray();
-
-        if (in.getVersion().onOrAfter(Version.V_7_0_0)) {
-            keyed = in.readBoolean();
-        }
+        keyed = in.readBoolean();
     }
 
     @Override
     protected void innerWriteTo(StreamOutput out) throws IOException {
         out.writeDoubleArray(percents);
-
-        if (out.getVersion().onOrAfter(Version.V_7_0_0)) {
-            out.writeBoolean(keyed);
-        }
+        out.writeBoolean(keyed);
     }
 
     /**
@@ -112,19 +101,18 @@ public class PercentilesBucketPipelineAggregationBuilder
     }
 
     @Override
-    protected PipelineAggregator createInternal(Map<String, Object> metaData) throws IOException {
-        return new PercentilesBucketPipelineAggregator(name, percents, keyed, bucketsPaths, gapPolicy(), formatter(), metaData);
+    protected PipelineAggregator createInternal(Map<String, Object> metadata) {
+        return new PercentilesBucketPipelineAggregator(name, percents, keyed, bucketsPaths, gapPolicy(), formatter(), metadata);
     }
 
     @Override
-    public void doValidate(AggregatorFactory<?> parent, Collection<AggregationBuilder> aggFactories,
-            Collection<PipelineAggregationBuilder> pipelineAggregatorFactories) {
-        super.doValidate(parent, aggFactories, pipelineAggregatorFactories);
-
+    protected void validate(ValidationContext context) {
+        super.validate(context);
         for (Double p : percents) {
             if (p == null || p < 0.0 || p > 100.0) {
-                throw new IllegalStateException(PERCENTS_FIELD.getPreferredName()
+                context.addValidationError(PERCENTS_FIELD.getPreferredName()
                         + " must only contain non-null doubles from 0.0-100.0 inclusive");
+                return;
             }
         }
     }
@@ -180,14 +168,18 @@ public class PercentilesBucketPipelineAggregationBuilder
     };
 
     @Override
-    protected int innerHashCode() {
-        return Objects.hash(Arrays.hashCode(percents), keyed);
+    public int hashCode() {
+        return Objects.hash(super.hashCode(), Arrays.hashCode(percents), keyed);
     }
 
     @Override
-    protected boolean innerEquals(BucketMetricsPipelineAggregationBuilder<PercentilesBucketPipelineAggregationBuilder> obj) {
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (obj == null || getClass() != obj.getClass()) return false;
+        if (super.equals(obj) == false) return false;
         PercentilesBucketPipelineAggregationBuilder other = (PercentilesBucketPipelineAggregationBuilder) obj;
-        return Objects.deepEquals(percents, other.percents) && Objects.equals(keyed, other.keyed);
+        return Objects.deepEquals(percents, other.percents)
+            && Objects.equals(keyed, other.keyed);
     }
 
     @Override

@@ -19,7 +19,6 @@
 package org.elasticsearch.index.query.functionscore;
 
 import org.apache.logging.log4j.LogManager;
-import org.elasticsearch.Version;
 import org.elasticsearch.common.ParsingException;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -58,9 +57,7 @@ public class RandomScoreFunctionBuilder extends ScoreFunctionBuilder<RandomScore
         if (in.readBoolean()) {
             seed = in.readInt();
         }
-        if (in.getVersion().onOrAfter(Version.V_6_0_0_beta1)) {
-            field = in.readOptionalString();
-        }
+        field = in.readOptionalString();
     }
 
     @Override
@@ -71,9 +68,7 @@ public class RandomScoreFunctionBuilder extends ScoreFunctionBuilder<RandomScore
         } else {
             out.writeBoolean(false);
         }
-        if (out.getVersion().onOrAfter(Version.V_6_0_0_beta1)) {
-            out.writeOptionalString(field);
-        }
+        out.writeOptionalString(field);
     }
 
     @Override
@@ -166,11 +161,11 @@ public class RandomScoreFunctionBuilder extends ScoreFunctionBuilder<RandomScore
         } else {
             final MappedFieldType fieldType;
             if (field != null) {
-                fieldType = context.getMapperService().fullName(field);
+                fieldType = context.getMapperService().fieldType(field);
             } else {
                 deprecationLogger.deprecated(
                         "As of version 7.0 Elasticsearch will require that a [field] parameter is provided when a [seed] is set");
-                fieldType = context.getMapperService().fullName(IdFieldMapper.NAME);
+                fieldType = context.getMapperService().fieldType(IdFieldMapper.NAME);
             }
             if (fieldType == null) {
                 if (context.getMapperService().documentMapper() == null) {

@@ -24,13 +24,14 @@ import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
-import org.elasticsearch.xpack.core.watcher.WatcherMetaData;
+import org.elasticsearch.xpack.core.watcher.WatcherMetadata;
 import org.elasticsearch.xpack.core.watcher.execution.WatchExecutionSnapshot;
 import org.elasticsearch.xpack.core.watcher.transport.actions.ack.AckWatchRequest;
 import org.elasticsearch.xpack.core.watcher.transport.actions.ack.AckWatchResponse;
 import org.elasticsearch.xpack.core.watcher.transport.actions.stats.WatcherStatsAction;
 import org.elasticsearch.xpack.core.watcher.transport.actions.stats.WatcherStatsResponse;
 import org.elasticsearch.xpack.core.watcher.watch.Watch;
+import org.elasticsearch.xpack.watcher.ClockHolder;
 import org.elasticsearch.xpack.watcher.watch.WatchParser;
 import org.junit.Before;
 
@@ -62,21 +63,22 @@ public class TransportAckWatchActionTests extends ESTestCase {
         client = mock(Client.class);
         when(client.threadPool()).thenReturn(threadPool);
         action = new TransportAckWatchAction(transportService, new ActionFilters(Collections.emptySet()),
-            Clock.systemUTC(), new XPackLicenseState(Settings.EMPTY), watchParser, client, createClusterService(threadPool));
+            new ClockHolder(Clock.systemUTC()), new XPackLicenseState(Settings.EMPTY),
+            watchParser, client, createClusterService(threadPool));
     }
 
     public void testWatchNotFound() {
         String watchId = "my_watch_id";
         doAnswer(invocation -> {
             ActionListener<GetResponse> listener = (ActionListener<GetResponse>) invocation.getArguments()[1];
-            listener.onResponse(new GetResponse(new GetResult(Watch.INDEX, Watch.DOC_TYPE, watchId, UNASSIGNED_SEQ_NO, 0, -1, false,
-                    BytesArray.EMPTY, Collections.emptyMap())));
+            listener.onResponse(new GetResponse(new GetResult(Watch.INDEX, watchId, UNASSIGNED_SEQ_NO,
+                0, -1, false, BytesArray.EMPTY, Collections.emptyMap(), Collections.emptyMap())));
             return null;
         }).when(client).get(anyObject(), anyObject());
 
         doAnswer(invocation -> {
             ContextPreservingActionListener listener = (ContextPreservingActionListener) invocation.getArguments()[2];
-            listener.onResponse(new WatcherStatsResponse(new ClusterName("clusterName"), new WatcherMetaData(false),
+            listener.onResponse(new WatcherStatsResponse(new ClusterName("clusterName"), new WatcherMetadata(false),
                 Collections.emptyList(), Collections.emptyList()));
             return null;
         }).when(client).execute(eq(WatcherStatsAction.INSTANCE), anyObject(), anyObject());
@@ -101,7 +103,7 @@ public class TransportAckWatchActionTests extends ESTestCase {
             when(snapshot.watchId()).thenReturn(watchId);
             node.setSnapshots(Collections.singletonList(snapshot));
             listener.onResponse(new WatcherStatsResponse(new ClusterName("clusterName"),
-                new WatcherMetaData(false), Collections.singletonList(node), Collections.emptyList()));
+                new WatcherMetadata(false), Collections.singletonList(node), Collections.emptyList()));
             return null;
         }).when(client).execute(eq(WatcherStatsAction.INSTANCE), anyObject(), anyObject());
 

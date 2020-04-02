@@ -31,8 +31,8 @@ import java.util.Map;
 public class InternalExtendedStatsBucket extends InternalExtendedStats implements ExtendedStatsBucket {
     InternalExtendedStatsBucket(String name, long count, double sum, double min, double max, double sumOfSqrs, double sigma,
                                             DocValueFormat formatter, List<PipelineAggregator> pipelineAggregators,
-                                            Map<String, Object> metaData) {
-        super(name, count, sum, min, max, sumOfSqrs, sigma, formatter, pipelineAggregators, metaData);
+                                            Map<String, Object> metadata) {
+        super(name, count, sum, min, max, sumOfSqrs, sigma, formatter, pipelineAggregators, metadata);
     }
 
     /**
@@ -48,7 +48,7 @@ public class InternalExtendedStatsBucket extends InternalExtendedStats implement
     }
 
     @Override
-    public InternalExtendedStats doReduce(List<InternalAggregation> aggregations, ReduceContext reduceContext) {
+    public InternalExtendedStats reduce(List<InternalAggregation> aggregations, ReduceContext reduceContext) {
         throw new UnsupportedOperationException("Not supported");
     }
 }

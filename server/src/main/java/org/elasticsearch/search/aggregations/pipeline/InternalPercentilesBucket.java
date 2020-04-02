@@ -19,7 +19,6 @@
 
 package org.elasticsearch.search.aggregations.pipeline;
 
-import org.elasticsearch.Version;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -45,8 +44,8 @@ public class InternalPercentilesBucket extends InternalNumericMetricsAggregation
 
     InternalPercentilesBucket(String name, double[] percents, double[] percentiles, boolean keyed,
                                      DocValueFormat formatter, List<PipelineAggregator> pipelineAggregators,
-                                     Map<String, Object> metaData) {
-        super(name, pipelineAggregators, metaData);
+                                     Map<String, Object> metadata) {
+        super(name, pipelineAggregators, metadata);
         if ((percentiles.length == percents.length) == false) {
             throw new IllegalArgumentException("The number of provided percents and percentiles didn't match. percents: "
                     + Arrays.toString(percents) + ", percentiles: " + Arrays.toString(percentiles));
@@ -72,10 +71,7 @@ public class InternalPercentilesBucket extends InternalNumericMetricsAggregation
         format = in.readNamedWriteable(DocValueFormat.class);
         percentiles = in.readDoubleArray();
         percents = in.readDoubleArray();
-
-        if (in.getVersion().onOrAfter(Version.V_7_0_0)) {
-            keyed = in.readBoolean();
-        }
+        keyed = in.readBoolean();
 
         computeLookup();
     }
@@ -85,10 +81,7 @@ public class InternalPercentilesBucket extends InternalNumericMetricsAggregation
         out.writeNamedWriteable(format);
         out.writeDoubleArray(percentiles);
         out.writeDoubleArray(percents);
-
-        if (out.getVersion().onOrAfter(Version.V_7_0_0)) {
-            out.writeBoolean(keyed);
-        }
+        out.writeBoolean(keyed);
     }
 
     @Override
@@ -126,7 +119,7 @@ public class InternalPercentilesBucket extends InternalNumericMetricsAggregation
     }
 
     @Override
-    public InternalMax doReduce(List<InternalAggregation> aggregations, ReduceContext reduceContext) {
+    public InternalMax reduce(List<InternalAggregation> aggregations, ReduceContext reduceContext) {
         throw new UnsupportedOperationException("Not supported");
     }
 
@@ -163,14 +156,18 @@ public class InternalPercentilesBucket extends InternalNumericMetricsAggregation
     }
 
     @Override
-    protected boolean doEquals(Object obj) {
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (obj == null || getClass() != obj.getClass()) return false;
+        if (super.equals(obj) == false) return false;
+
         InternalPercentilesBucket that = (InternalPercentilesBucket) obj;
         return Arrays.equals(percents, that.percents) && Arrays.equals(percentiles, that.percentiles);
     }
 
     @Override
-    protected int doHashCode() {
-        return Objects.hash(Arrays.hashCode(percents), Arrays.hashCode(percentiles));
+    public int hashCode() {
+        return Objects.hash(super.hashCode(), Arrays.hashCode(percents), Arrays.hashCode(percentiles));
     }
 
     public static class Iter implements Iterator<Percentile> {

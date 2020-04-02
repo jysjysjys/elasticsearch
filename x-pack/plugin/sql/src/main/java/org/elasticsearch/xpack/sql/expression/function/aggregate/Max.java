@@ -5,16 +5,18 @@
  */
 package org.elasticsearch.xpack.sql.expression.function.aggregate;
 
-import org.elasticsearch.xpack.sql.expression.Expression;
-import org.elasticsearch.xpack.sql.expression.Expressions.ParamOrdinal;
-import org.elasticsearch.xpack.sql.tree.NodeInfo;
-import org.elasticsearch.xpack.sql.tree.Source;
-import org.elasticsearch.xpack.sql.type.DataType;
+import org.elasticsearch.xpack.ql.expression.Expression;
+import org.elasticsearch.xpack.ql.expression.Expressions.ParamOrdinal;
+import org.elasticsearch.xpack.ql.expression.function.aggregate.EnclosedAgg;
+import org.elasticsearch.xpack.ql.tree.NodeInfo;
+import org.elasticsearch.xpack.ql.tree.Source;
+import org.elasticsearch.xpack.ql.type.DataType;
+import org.elasticsearch.xpack.ql.type.DataTypes;
 
 import java.util.List;
 
-import static org.elasticsearch.xpack.sql.expression.TypeResolutions.isExact;
-import static org.elasticsearch.xpack.sql.expression.TypeResolutions.isNumericOrDate;
+import static org.elasticsearch.xpack.ql.expression.TypeResolutions.isExact;
+import static org.elasticsearch.xpack.sql.expression.SqlTypeResolutions.isNumericOrDateOrTime;
 
 /**
  * Find the maximum value in matching documents.
@@ -47,10 +49,10 @@ public class Max extends NumericAggregate implements EnclosedAgg {
 
     @Override
     protected TypeResolution resolveType() {
-        if (field().dataType().isString()) {
+        if (DataTypes.isString(field().dataType())) {
             return isExact(field(), sourceText(), ParamOrdinal.DEFAULT);
         } else {
-            return isNumericOrDate(field(), sourceText(), ParamOrdinal.DEFAULT);
+            return isNumericOrDateOrTime(field(), sourceText(), ParamOrdinal.DEFAULT);
         }
     }
 }

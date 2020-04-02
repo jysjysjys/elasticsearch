@@ -19,156 +19,38 @@
 
 package org.elasticsearch.discovery;
 
-import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.elasticsearch.action.admin.indices.stats.IndicesStatsResponse;
 import org.elasticsearch.action.admin.indices.stats.ShardStats;
 import org.elasticsearch.action.bulk.BulkRequestBuilder;
 import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.cluster.ClusterStateUpdateTask;
 import org.elasticsearch.cluster.coordination.NoMasterBlockService;
-import org.elasticsearch.cluster.metadata.IndexMetaData;
-import org.elasticsearch.cluster.node.DiscoveryNode;
-import org.elasticsearch.cluster.service.ClusterService;
-import org.elasticsearch.common.Priority;
-import org.elasticsearch.common.collect.Tuple;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.elasticsearch.test.disruption.BlockMasterServiceOnMaster;
 import org.elasticsearch.test.disruption.IntermittentLongGCDisruption;
-import org.elasticsearch.test.disruption.LongGCDisruption;
 import org.elasticsearch.test.disruption.NetworkDisruption;
 import org.elasticsearch.test.disruption.NetworkDisruption.TwoPartitions;
 import org.elasticsearch.test.disruption.ServiceDisruptionScheme;
 import org.elasticsearch.test.disruption.SingleNodeDisruption;
-import org.elasticsearch.test.junit.annotations.TestLogging;
 
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
-import static org.hamcrest.Matchers.nullValue;
 
 /**
  * Tests relating to the loss of the master.
  */
-@TestLogging("_root:DEBUG,org.elasticsearch.cluster.service:TRACE")
-@ESIntegTestCase.ClusterScope(scope = ESIntegTestCase.Scope.TEST, numDataNodes = 0, transportClientRatio = 0)
+@ESIntegTestCase.ClusterScope(scope = ESIntegTestCase.Scope.TEST, numDataNodes = 0)
 public class MasterDisruptionIT extends AbstractDisruptionTestCase {
-
-    /**
-     * Tests that emulates a frozen elected master node that unfreezes and pushes his cluster state to other nodes
-     * that already are following another elected master node. These nodes should reject this cluster state and prevent
-     * them from following the stale master.
-     */
-    @TestLogging("_root:DEBUG,org.elasticsearch.cluster.service:TRACE,org.elasticsearch.test.disruption:TRACE")
-    public void testStaleMasterNotHijackingMajority() throws Exception {
-        final List<String> nodes = startCluster(3);
-
-        // Save the current master node as old master node, because that node will get frozen
-        final String oldMasterNode = internalCluster().getMasterName();
-        for (String node : nodes) {
-            ensureStableCluster(3, node);
-        }
-        assertMaster(oldMasterNode, nodes);
-
-        // Simulating a painful gc by suspending all threads for a long time on the current elected master node.
-        SingleNodeDisruption masterNodeDisruption = new LongGCDisruption(random(), oldMasterNode);
-
-        // Save the majority side
-        final List<String> majoritySide = new ArrayList<>(nodes);
-        majoritySide.remove(oldMasterNode);
-
-        // Keeps track of the previous and current master when a master node transition took place on each node on the majority side:
-        final Map<String, List<Tuple<String, String>>> masters = Collections.synchronizedMap(new HashMap<>());
-        for (final String node : majoritySide) {
-            masters.put(node, new ArrayList<>());
-            internalCluster().getInstance(ClusterService.class, node).addListener(event -> {
-                DiscoveryNode previousMaster = event.previousState().nodes().getMasterNode();
-                DiscoveryNode currentMaster = event.state().nodes().getMasterNode();
-                if (!Objects.equals(previousMaster, currentMaster)) {
-                    logger.info("node {} received new cluster state: {} \n and had previous cluster state: {}", node, event.state(),
-                            event.previousState());
-                    String previousMasterNodeName = previousMaster != null ? previousMaster.getName() : null;
-                    String currentMasterNodeName = currentMaster != null ? currentMaster.getName() : null;
-                    masters.get(node).add(new Tuple<>(previousMasterNodeName, currentMasterNodeName));
-                }
-            });
-        }
-
-        final CountDownLatch oldMasterNodeSteppedDown = new CountDownLatch(1);
-        internalCluster().getInstance(ClusterService.class, oldMasterNode).addListener(event -> {
-            if (event.state().nodes().getMasterNodeId() == null) {
-                oldMasterNodeSteppedDown.countDown();
-            }
-        });
-
-        internalCluster().setDisruptionScheme(masterNodeDisruption);
-        logger.info("freezing node [{}]", oldMasterNode);
-        masterNodeDisruption.startDisrupting();
-
-        // Wait for the majority side to get stable
-        assertDifferentMaster(majoritySide.get(0), oldMasterNode);
-        assertDifferentMaster(majoritySide.get(1), oldMasterNode);
-
-        // The old master node is frozen, but here we submit a cluster state update task that doesn't get executed,
-        // but will be queued and once the old master node un-freezes it gets executed.
-        // The old master node will send this update + the cluster state where he is flagged as master to the other
-        // nodes that follow the new master. These nodes should ignore this update.
-        internalCluster().getInstance(ClusterService.class, oldMasterNode).submitStateUpdateTask("sneaky-update", new
-                ClusterStateUpdateTask(Priority.IMMEDIATE) {
-                    @Override
-                    public ClusterState execute(ClusterState currentState) {
-                        return ClusterState.builder(currentState).build();
-                    }
-
-                    @Override
-                    public void onFailure(String source, Exception e) {
-                        logger.warn(() -> new ParameterizedMessage("failure [{}]", source), e);
-                    }
-                });
-
-        // Save the new elected master node
-        final String newMasterNode = internalCluster().getMasterName(majoritySide.get(0));
-        logger.info("new detected master node [{}]", newMasterNode);
-
-        // Stop disruption
-        logger.info("Unfreeze node [{}]", oldMasterNode);
-        masterNodeDisruption.stopDisrupting();
-
-        oldMasterNodeSteppedDown.await(30, TimeUnit.SECONDS);
-        // Make sure that the end state is consistent on all nodes:
-        assertMaster(newMasterNode, nodes);
-
-        assertThat(masters.size(), equalTo(2));
-        for (Map.Entry<String, List<Tuple<String, String>>> entry : masters.entrySet()) {
-            String nodeName = entry.getKey();
-            List<Tuple<String, String>> recordedMasterTransition = entry.getValue();
-            assertThat("[" + nodeName + "] Each node should only record two master node transitions",
-                recordedMasterTransition, hasSize(2));
-            assertThat("[" + nodeName + "] First transition's previous master should be [" + oldMasterNode + "]",
-                recordedMasterTransition.get(0).v1(), equalTo(oldMasterNode));
-            assertThat("[" + nodeName + "] First transition's current master should be [null]",
-                recordedMasterTransition.get(0).v2(), nullValue());
-            assertThat("[" + nodeName + "] Second transition's previous master should be [null]",
-                recordedMasterTransition.get(1).v1(), nullValue());
-            assertThat("[" + nodeName + "] Second transition's current master should be [" + newMasterNode + "]",
-                recordedMasterTransition.get(1).v2(), equalTo(newMasterNode));
-        }
-    }
 
     /**
      * Test that cluster recovers from a long GC on master that causes other nodes to elect a new one
@@ -210,18 +92,13 @@ public class MasterDisruptionIT extends AbstractDisruptionTestCase {
      * This test isolates the master from rest of the cluster, waits for a new master to be elected, restores the partition
      * and verifies that all node agree on the new cluster state
      */
-    @TestLogging(
-            "_root:DEBUG,"
-                    + "org.elasticsearch.cluster.service:TRACE,"
-                    + "org.elasticsearch.gateway:TRACE,"
-                    + "org.elasticsearch.indices.store:TRACE")
     public void testIsolateMasterAndVerifyClusterStateConsensus() throws Exception {
         final List<String> nodes = startCluster(3);
 
         assertAcked(prepareCreate("test")
                 .setSettings(Settings.builder()
-                        .put(IndexMetaData.SETTING_NUMBER_OF_SHARDS, 1 + randomInt(2))
-                        .put(IndexMetaData.SETTING_NUMBER_OF_REPLICAS, randomInt(2))
+                        .put(IndexMetadata.SETTING_NUMBER_OF_SHARDS, 1 + randomInt(2))
+                        .put(IndexMetadata.SETTING_NUMBER_OF_REPLICAS, randomInt(2))
                 ));
 
         ensureGreen();
@@ -267,7 +144,7 @@ public class MasterDisruptionIT extends AbstractDisruptionTestCase {
                     assertEquals("unequal versions", state.version(), nodeState.version());
                     assertEquals("unequal node count", state.nodes().getSize(), nodeState.nodes().getSize());
                     assertEquals("different masters ", state.nodes().getMasterNodeId(), nodeState.nodes().getMasterNodeId());
-                    assertEquals("different meta data version", state.metaData().version(), nodeState.metaData().version());
+                    assertEquals("different meta data version", state.metadata().version(), nodeState.metadata().version());
                     assertEquals("different routing", state.routingTable().toString(), nodeState.routingTable().toString());
                 } catch (AssertionError t) {
                     fail("failed comparing cluster state: " + t.getMessage() + "\n" +
@@ -287,8 +164,8 @@ public class MasterDisruptionIT extends AbstractDisruptionTestCase {
 
         // Makes sure that the get request can be executed on each node locally:
         assertAcked(prepareCreate("test").setSettings(Settings.builder()
-                .put(IndexMetaData.SETTING_NUMBER_OF_SHARDS, 1)
-                .put(IndexMetaData.SETTING_NUMBER_OF_REPLICAS, 2)
+                .put(IndexMetadata.SETTING_NUMBER_OF_SHARDS, 1)
+                .put(IndexMetadata.SETTING_NUMBER_OF_REPLICAS, 2)
         ));
 
         // Everything is stable now, it is now time to simulate evil...
@@ -312,7 +189,7 @@ public class MasterDisruptionIT extends AbstractDisruptionTestCase {
         // continuously ping until network failures have been resolved. However
         // It may a take a bit before the node detects it has been cut off from the elected master
         logger.info("waiting for isolated node [{}] to have no master", isolatedNode);
-        assertNoMaster(isolatedNode, NoMasterBlockService.NO_MASTER_BLOCK_WRITES, TimeValue.timeValueSeconds(10));
+        assertNoMaster(isolatedNode, NoMasterBlockService.NO_MASTER_BLOCK_WRITES, TimeValue.timeValueSeconds(30));
 
 
         logger.info("wait until elected master has been removed and a new 2 node cluster was from (via [{}])", isolatedNode);
@@ -351,7 +228,7 @@ public class MasterDisruptionIT extends AbstractDisruptionTestCase {
         // continuously ping until network failures have been resolved. However
         // It may a take a bit before the node detects it has been cut off from the elected master
         logger.info("waiting for isolated node [{}] to have no master", isolatedNode);
-        assertNoMaster(isolatedNode, NoMasterBlockService.NO_MASTER_BLOCK_ALL, TimeValue.timeValueSeconds(10));
+        assertNoMaster(isolatedNode, NoMasterBlockService.NO_MASTER_BLOCK_ALL, TimeValue.timeValueSeconds(30));
 
         // make sure we have stable cluster & cross partition recoveries are canceled by the removal of the missing node
         // the unresponsive partition causes recoveries to only time out after 15m (default) and these will cause
@@ -360,16 +237,6 @@ public class MasterDisruptionIT extends AbstractDisruptionTestCase {
 
     }
 
-    @TestLogging(
-        "_root:DEBUG,"
-            + "org.elasticsearch.action.bulk:TRACE,"
-            + "org.elasticsearch.action.get:TRACE,"
-            + "org.elasticsearch.cluster.service:TRACE,"
-            + "org.elasticsearch.discovery:TRACE,"
-            + "org.elasticsearch.indices.cluster:TRACE,"
-            + "org.elasticsearch.indices.recovery:TRACE,"
-            + "org.elasticsearch.index.seqno:TRACE,"
-            + "org.elasticsearch.index.shard:TRACE")
     public void testMappingTimeout() throws Exception {
         startCluster(3);
         createIndex("test", Settings.builder()
@@ -379,7 +246,7 @@ public class MasterDisruptionIT extends AbstractDisruptionTestCase {
         .build());
 
         // create one field
-        index("test", "doc", "1", "{ \"f\": 1 }");
+        index("test", "1", "{ \"f\": 1 }");
 
         ensureGreen();
 
@@ -392,9 +259,9 @@ public class MasterDisruptionIT extends AbstractDisruptionTestCase {
         disruption.startDisrupting();
 
         BulkRequestBuilder bulk = client().prepareBulk();
-        bulk.add(client().prepareIndex("test", "doc", "2").setSource("{ \"f\": 1 }", XContentType.JSON));
-        bulk.add(client().prepareIndex("test", "doc", "3").setSource("{ \"g\": 1 }", XContentType.JSON));
-        bulk.add(client().prepareIndex("test", "doc", "4").setSource("{ \"f\": 1 }", XContentType.JSON));
+        bulk.add(client().prepareIndex("test").setId("2").setSource("{ \"f\": 1 }", XContentType.JSON));
+        bulk.add(client().prepareIndex("test").setId("3").setSource("{ \"g\": 1 }", XContentType.JSON));
+        bulk.add(client().prepareIndex("test").setId("4").setSource("{ \"f\": 1 }", XContentType.JSON));
         BulkResponse bulkResponse = bulk.get();
         assertTrue(bulkResponse.hasFailures());
 

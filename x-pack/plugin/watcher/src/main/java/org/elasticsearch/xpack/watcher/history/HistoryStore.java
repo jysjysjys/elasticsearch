@@ -12,7 +12,7 @@ import org.apache.logging.log4j.util.Supplier;
 import org.elasticsearch.action.bulk.BulkProcessor;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.cluster.metadata.IndexMetaData;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.xpack.core.watcher.history.HistoryStoreField;
@@ -27,8 +27,6 @@ import java.time.ZonedDateTime;
 import static org.elasticsearch.xpack.core.watcher.support.Exceptions.ioException;
 
 public class HistoryStore {
-
-    public static final String DOC_TYPE = "doc";
 
     private static final Logger logger = LogManager.getLogger(HistoryStore.class);
 
@@ -47,7 +45,7 @@ public class HistoryStore {
         try (XContentBuilder builder = XContentFactory.jsonBuilder()) {
             watchRecord.toXContent(builder, WatcherParams.HIDE_SECRETS);
 
-            IndexRequest request = new IndexRequest(index, DOC_TYPE, watchRecord.id().value()).source(builder);
+            IndexRequest request = new IndexRequest(index).id(watchRecord.id().value()).source(builder);
             request.opType(IndexRequest.OpType.CREATE);
             bulkProcessor.add(request);
         } catch (IOException ioe) {
@@ -64,7 +62,7 @@ public class HistoryStore {
             try (XContentBuilder builder = XContentFactory.jsonBuilder()) {
                 watchRecord.toXContent(builder, WatcherParams.HIDE_SECRETS);
 
-                IndexRequest request = new IndexRequest(index, DOC_TYPE, watchRecord.id().value()).source(builder);
+                IndexRequest request = new IndexRequest(index).id(watchRecord.id().value()).source(builder);
                 bulkProcessor.add(request);
         } catch (IOException ioe) {
             final WatchRecord wr = watchRecord;
@@ -81,8 +79,8 @@ public class HistoryStore {
      */
     public static boolean validate(ClusterState state) {
         String currentIndex = HistoryStoreField.getHistoryIndexNameForTime(ZonedDateTime.now(ZoneOffset.UTC));
-        IndexMetaData indexMetaData = WatchStoreUtils.getConcreteIndex(currentIndex, state.metaData());
-        return indexMetaData == null || (indexMetaData.getState() == IndexMetaData.State.OPEN &&
-            state.routingTable().index(indexMetaData.getIndex()).allPrimaryShardsActive());
+        IndexMetadata indexMetadata = WatchStoreUtils.getConcreteIndex(currentIndex, state.metadata());
+        return indexMetadata == null || (indexMetadata.getState() == IndexMetadata.State.OPEN &&
+            state.routingTable().index(indexMetadata.getIndex()).allPrimaryShardsActive());
     }
 }

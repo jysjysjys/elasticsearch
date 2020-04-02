@@ -22,7 +22,6 @@ package org.elasticsearch.search;
 import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.TotalHits;
 import org.apache.lucene.search.TotalHits.Relation;
-import org.elasticsearch.Version;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -48,7 +47,7 @@ public final class SearchHits implements Writeable, ToXContentFragment, Iterable
     }
 
     public static SearchHits empty(boolean withTotalHits) {
-        // We shouldn't use static final instance, since that could directly be returned by native transport clients
+        // TODO: consider using static final instance
         return new SearchHits(EMPTY, withTotalHits ? new TotalHits(0, Relation.EQUAL_TO) : null, 0);
     }
 
@@ -95,15 +94,9 @@ public final class SearchHits implements Writeable, ToXContentFragment, Iterable
                 hits[i] = new SearchHit(in);
             }
         }
-        if (in.getVersion().onOrAfter(Version.V_6_6_0)) {
-            sortFields = in.readOptionalArray(Lucene::readSortField, SortField[]::new);
-            collapseField = in.readOptionalString();
-            collapseValues = in.readOptionalArray(Lucene::readSortValue, Object[]::new);
-        } else {
-            sortFields = null;
-            collapseField = null;
-            collapseValues = null;
-        }
+        sortFields = in.readOptionalArray(Lucene::readSortField, SortField[]::new);
+        collapseField = in.readOptionalString();
+        collapseValues = in.readOptionalArray(Lucene::readSortValue, Object[]::new);
     }
 
     @Override
@@ -120,11 +113,9 @@ public final class SearchHits implements Writeable, ToXContentFragment, Iterable
                 hit.writeTo(out);
             }
         }
-        if (out.getVersion().onOrAfter(Version.V_6_6_0)) {
-            out.writeOptionalArray(Lucene::writeSortField, sortFields);
-            out.writeOptionalString(collapseField);
-            out.writeOptionalArray(Lucene::writeSortValue, collapseValues);
-        }
+        out.writeOptionalArray(Lucene::writeSortField, sortFields);
+        out.writeOptionalString(collapseField);
+        out.writeOptionalArray(Lucene::writeSortValue, collapseValues);
     }
 
     /**

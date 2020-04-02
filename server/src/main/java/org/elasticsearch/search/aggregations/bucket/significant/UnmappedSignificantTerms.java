@@ -57,8 +57,8 @@ public class UnmappedSignificantTerms extends InternalSignificantTerms<UnmappedS
     }
 
     public UnmappedSignificantTerms(String name, int requiredSize, long minDocCount, List<PipelineAggregator> pipelineAggregators,
-                                    Map<String, Object> metaData) {
-        super(name, requiredSize, minDocCount, pipelineAggregators, metaData);
+                                    Map<String, Object> metadata) {
+        super(name, requiredSize, minDocCount, pipelineAggregators, metadata);
     }
 
     /**
@@ -85,7 +85,7 @@ public class UnmappedSignificantTerms extends InternalSignificantTerms<UnmappedS
 
     @Override
     public UnmappedSignificantTerms create(List<Bucket> buckets) {
-        return new UnmappedSignificantTerms(name, requiredSize, minDocCount, pipelineAggregators(), metaData);
+        return new UnmappedSignificantTerms(name, requiredSize, minDocCount, pipelineAggregators(), metadata);
     }
 
     @Override
@@ -99,8 +99,14 @@ public class UnmappedSignificantTerms extends InternalSignificantTerms<UnmappedS
     }
 
     @Override
-    public InternalAggregation doReduce(List<InternalAggregation> aggregations, ReduceContext reduceContext) {
-        return new UnmappedSignificantTerms(name, requiredSize, minDocCount, pipelineAggregators(), metaData);
+    Bucket createBucket(long subsetDf, long subsetSize, long supersetDf, long supersetSize,
+                        InternalAggregations aggregations, Bucket prototype) {
+        throw new UnsupportedOperationException("not supported for UnmappedSignificantTerms");
+    }
+
+    @Override
+    public InternalAggregation reduce(List<InternalAggregation> aggregations, ReduceContext reduceContext) {
+        return new UnmappedSignificantTerms(name, requiredSize, minDocCount, pipelineAggregators(), metadata);
     }
 
     @Override

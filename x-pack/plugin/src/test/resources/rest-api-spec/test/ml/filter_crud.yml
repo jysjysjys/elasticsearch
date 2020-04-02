@@ -86,29 +86,48 @@ setup:
         from: 1
         size: 1
 
-  - match: { count:   1 }
+  - match: { count:   2 }
+
+  - match:
+      filters.0:
+        filter_id: "filter-foo2"
+        description: "This filter has a description"
+        items: ["123", "lmnop"]
 
 ---
-"Test invalid param combinations":
+"Test get filters API with expression ID":
 
   - do:
-      catch: bad_request
       ml.get_filters:
+        filter_id: "filter-foo,filter-foo2"
+
+  - match: { count:   2 }
+  - match:
+      filters.0:
         filter_id: "filter-foo"
-        from: 0
+        items: ["abc", "xyz"]
+
+  - match:
+      filters.1:
+        filter_id: "filter-foo2"
+        description: "This filter has a description"
+        items: ["123", "lmnop"]
 
   - do:
-      catch: bad_request
       ml.get_filters:
-        filter_id: "filter-foo"
-        size: 1
+        filter_id: "filter-foo*"
 
-  - do:
-      catch: bad_request
-      ml.get_filters:
+  - match: { count:   2 }
+  - match:
+      filters.0:
         filter_id: "filter-foo"
-        from: 0
-        size: 1
+        items: ["abc", "xyz"]
+
+  - match:
+      filters.1:
+        filter_id: "filter-foo2"
+        description: "This filter has a description"
+        items: ["123", "lmnop"]
 
 ---
 "Test create filter given invalid filter_id":
@@ -288,6 +307,21 @@ setup:
   - do:
       ml.delete_filter:
         filter_id: "filter-foo2"
+
+  - do:
+      ml.get_filters: {}
+  - match: { count: 0 }
+  - match: { filters: [] }
+
+---
+"Test get all filter given index exists but no mapping for filter_id":
+
+  - do:
+      indices.delete:
+        index: ".ml-meta"
+  - do:
+      indices.create:
+        index: ".ml-meta"
 
   - do:
       ml.get_filters: {}

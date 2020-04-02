@@ -30,13 +30,14 @@ import org.elasticsearch.search.aggregations.pipeline.PipelineAggregator;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 public final class InternalCardinality extends InternalNumericMetricsAggregation.SingleValue implements Cardinality {
     private final HyperLogLogPlusPlus counts;
 
     InternalCardinality(String name, HyperLogLogPlusPlus counts, List<PipelineAggregator> pipelineAggregators,
-            Map<String, Object> metaData) {
-        super(name, pipelineAggregators, metaData);
+            Map<String, Object> metadata) {
+        super(name, pipelineAggregators, metadata);
         this.counts = counts;
     }
 
@@ -79,19 +80,19 @@ public final class InternalCardinality extends InternalNumericMetricsAggregation
         return counts == null ? 0 : counts.cardinality(0);
     }
 
-    HyperLogLogPlusPlus getCounts() {
+    public HyperLogLogPlusPlus getCounts() {
         return counts;
     }
 
     @Override
-    public InternalAggregation doReduce(List<InternalAggregation> aggregations, ReduceContext reduceContext) {
+    public InternalAggregation reduce(List<InternalAggregation> aggregations, ReduceContext reduceContext) {
         InternalCardinality reduced = null;
         for (InternalAggregation aggregation : aggregations) {
             final InternalCardinality cardinality = (InternalCardinality) aggregation;
             if (cardinality.counts != null) {
                 if (reduced == null) {
                     reduced = new InternalCardinality(name, new HyperLogLogPlusPlus(cardinality.counts.precision(),
-                            BigArrays.NON_RECYCLING_INSTANCE, 1), pipelineAggregators(), getMetaData());
+                            BigArrays.NON_RECYCLING_INSTANCE, 1), pipelineAggregators(), getMetadata());
                 }
                 reduced.merge(cardinality);
             }
@@ -117,12 +118,16 @@ public final class InternalCardinality extends InternalNumericMetricsAggregation
     }
 
     @Override
-    protected int doHashCode() {
-        return counts.hashCode(0);
+    public int hashCode() {
+        return Objects.hash(super.hashCode(), counts.hashCode(0));
     }
 
     @Override
-    protected boolean doEquals(Object obj) {
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (obj == null || getClass() != obj.getClass()) return false;
+        if (super.equals(obj) == false) return false;
+
         InternalCardinality other = (InternalCardinality) obj;
         return counts.equals(0, other.counts);
     }

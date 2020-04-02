@@ -5,6 +5,7 @@
  */
 package org.elasticsearch.upgrades;
 
+import org.elasticsearch.Version;
 import org.elasticsearch.client.Request;
 import org.elasticsearch.client.ResponseException;
 import org.elasticsearch.client.RestClient;
@@ -132,6 +133,7 @@ public class CcrRollingUpgradeIT extends AbstractMultiClusterUpgradeTestCase {
                     createLeaderIndex(leaderClient(), leaderIndex1);
                     index(leaderClient(), leaderIndex1, 64);
                     assertBusy(() -> {
+
                         String followerIndex = "copy-" + leaderIndex1;
                         assertThat(getNumberOfSuccessfulFollowedIndices(), equalTo(1));
                         assertTotalHitCount(followerIndex, 64, followerClient());
@@ -206,9 +208,14 @@ public class CcrRollingUpgradeIT extends AbstractMultiClusterUpgradeTestCase {
         }
     }
 
-    @AwaitsFix(bugUrl = "https://github.com/elastic/elasticsearch/issues/39355")
     public void testCannotFollowLeaderInUpgradedCluster() throws Exception {
-        assumeTrue("Tests only runs with upgrade_state [all]", upgradeState == UpgradeState.ALL);
+        if (upgradeState != UpgradeState.ALL) {
+            return;
+        }
+        if (Version.CURRENT.equals(UPGRADE_FROM_VERSION)) {
+            // can't run this test when executing rolling upgrade against current version.
+            return;
+        }
 
         if (clusterName == ClusterName.FOLLOWER) {
             // At this point the leader cluster has not been upgraded, but follower cluster has been upgrade.
@@ -314,7 +321,8 @@ public class CcrRollingUpgradeIT extends AbstractMultiClusterUpgradeTestCase {
 
     private static void putAutoFollowPattern(RestClient client, String name, String remoteCluster, String pattern) throws IOException {
         Request request = new Request("PUT", "/_ccr/auto_follow/" + name);
-        request.setJsonEntity("{\"leader_index_patterns\": [\"" + pattern + "\"], \"remote_cluster\": \"" + remoteCluster + "\"," +
+        request.setJsonEntity("{\"leader_index_patterns\": [\"" + pattern + "\"], \"remote_cluster\": \"" +
+            remoteCluster + "\"," +
             "\"follow_index_pattern\": \"copy-{{leader_index}}\", \"read_poll_timeout\": \"10ms\"}");
         assertOK(client.performRequest(request));
     }
@@ -326,7 +334,7 @@ public class CcrRollingUpgradeIT extends AbstractMultiClusterUpgradeTestCase {
 
     private int getNumberOfSuccessfulFollowedIndices() throws IOException {
         Request statsRequest = new Request("GET", "/_ccr/stats");
-        Map<?, ?> response = toMap(client().performRequest(statsRequest));
+        Map<?, ?> response = toMap(followerClient().performRequest(statsRequest));
         Integer actualSuccessfulFollowedIndices = ObjectPath.eval("auto_follow_stats.number_of_successful_follow_indices", response);
         if (actualSuccessfulFollowedIndices != null) {
             return actualSuccessfulFollowedIndices;

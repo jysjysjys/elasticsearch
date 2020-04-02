@@ -19,7 +19,9 @@
 package org.elasticsearch.search.aggregations.bucket.sampler;
 
 import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.search.DiversifiedTopDocsCollector;
 import org.apache.lucene.search.ScoreMode;
+import org.apache.lucene.util.RamUsageEstimator;
 import org.elasticsearch.common.ParseField;
 import org.elasticsearch.common.lease.Releasables;
 import org.elasticsearch.common.xcontent.LoggingDeprecationHandler;
@@ -56,6 +58,8 @@ public class SamplerAggregator extends DeferableBucketAggregator implements Sing
     public static final ParseField MAX_DOCS_PER_VALUE_FIELD = new ParseField("max_docs_per_value");
     public static final ParseField EXECUTION_HINT_FIELD = new ParseField("execution_hint");
 
+    static final long SCOREDOCKEY_SIZE = RamUsageEstimator.shallowSizeOfInstance(DiversifiedTopDocsCollector.ScoreDocKey.class);
+
     public enum ExecutionMode {
 
         MAP(new ParseField("map")) {
@@ -63,9 +67,9 @@ public class SamplerAggregator extends DeferableBucketAggregator implements Sing
             @Override
             Aggregator create(String name, AggregatorFactories factories, int shardSize, int maxDocsPerValue, ValuesSource valuesSource,
                     SearchContext context, Aggregator parent, List<PipelineAggregator> pipelineAggregators,
-                    Map<String, Object> metaData) throws IOException {
+                    Map<String, Object> metadata) throws IOException {
 
-                return new DiversifiedMapSamplerAggregator(name, shardSize, factories, context, parent, pipelineAggregators, metaData,
+                return new DiversifiedMapSamplerAggregator(name, shardSize, factories, context, parent, pipelineAggregators, metadata,
                         valuesSource,
                         maxDocsPerValue);
             }
@@ -81,10 +85,10 @@ public class SamplerAggregator extends DeferableBucketAggregator implements Sing
             @Override
             Aggregator create(String name, AggregatorFactories factories, int shardSize, int maxDocsPerValue, ValuesSource valuesSource,
                     SearchContext context, Aggregator parent, List<PipelineAggregator> pipelineAggregators,
-                    Map<String, Object> metaData) throws IOException {
+                    Map<String, Object> metadata) throws IOException {
 
                 return new DiversifiedBytesHashSamplerAggregator(name, shardSize, factories, context, parent, pipelineAggregators,
-                        metaData,
+                        metadata,
                         valuesSource,
                         maxDocsPerValue);
             }
@@ -100,8 +104,8 @@ public class SamplerAggregator extends DeferableBucketAggregator implements Sing
             @Override
             Aggregator create(String name, AggregatorFactories factories, int shardSize, int maxDocsPerValue, ValuesSource valuesSource,
                     SearchContext context, Aggregator parent, List<PipelineAggregator> pipelineAggregators,
-                    Map<String, Object> metaData) throws IOException {
-                return new DiversifiedOrdinalsSamplerAggregator(name, shardSize, factories, context, parent, pipelineAggregators, metaData,
+                    Map<String, Object> metadata) throws IOException {
+                return new DiversifiedOrdinalsSamplerAggregator(name, shardSize, factories, context, parent, pipelineAggregators, metadata,
                         (ValuesSource.Bytes.WithOrdinals.FieldData) valuesSource, maxDocsPerValue);
             }
 
@@ -129,7 +133,7 @@ public class SamplerAggregator extends DeferableBucketAggregator implements Sing
 
         abstract Aggregator create(String name, AggregatorFactories factories, int shardSize, int maxDocsPerValue,
                 ValuesSource valuesSource, SearchContext context, Aggregator parent, List<PipelineAggregator> pipelineAggregators,
-                Map<String, Object> metaData) throws IOException;
+                Map<String, Object> metadata) throws IOException;
 
         abstract boolean needsGlobalOrdinals();
 
@@ -144,9 +148,10 @@ public class SamplerAggregator extends DeferableBucketAggregator implements Sing
     protected BestDocsDeferringCollector bdd;
 
     SamplerAggregator(String name, int shardSize, AggregatorFactories factories, SearchContext context,
-            Aggregator parent, List<PipelineAggregator> pipelineAggregators, Map<String, Object> metaData) throws IOException {
-        super(name, factories, context, parent, pipelineAggregators, metaData);
-        this.shardSize = shardSize;
+            Aggregator parent, List<PipelineAggregator> pipelineAggregators, Map<String, Object> metadata) throws IOException {
+        super(name, factories, context, parent, pipelineAggregators, metadata);
+        // Make sure we do not allow size > maxDoc, to prevent accidental OOM
+        this.shardSize = Math.min(shardSize, context.searcher().getIndexReader().maxDoc());
     }
 
     @Override
@@ -156,7 +161,7 @@ public class SamplerAggregator extends DeferableBucketAggregator implements Sing
 
     @Override
     public DeferringBucketCollector getDeferringCollector() {
-        bdd = new BestDocsDeferringCollector(shardSize, context.bigArrays());
+        bdd = new BestDocsDeferringCollector(shardSize, context.bigArrays(), this::addRequestCircuitBreakerBytes);
         return bdd;
     }
 
@@ -170,12 +175,12 @@ public class SamplerAggregator extends DeferableBucketAggregator implements Sing
         runDeferredCollections(owningBucketOrdinal);
         return new InternalSampler(name, bdd == null ? 0 : bdd.getDocCount(owningBucketOrdinal), bucketAggregations(owningBucketOrdinal),
                 pipelineAggregators(),
-                metaData());
+                metadata());
     }
 
     @Override
     public InternalAggregation buildEmptyAggregation() {
-        return new InternalSampler(name, 0, buildEmptySubAggregations(), pipelineAggregators(), metaData());
+        return new InternalSampler(name, 0, buildEmptySubAggregations(), pipelineAggregators(), metadata());
     }
 
     @Override

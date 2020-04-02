@@ -21,12 +21,12 @@ package org.elasticsearch.common.unit;
 
 import org.apache.logging.log4j.LogManager;
 import org.elasticsearch.ElasticsearchParseException;
-import org.elasticsearch.Version;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.logging.DeprecationLogger;
+import org.elasticsearch.common.logging.LogConfigurator;
 import org.elasticsearch.common.xcontent.ToXContentFragment;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 
@@ -36,7 +36,14 @@ import java.util.Objects;
 
 public class ByteSizeValue implements Writeable, Comparable<ByteSizeValue>, ToXContentFragment {
 
-    private static final DeprecationLogger deprecationLogger = new DeprecationLogger(LogManager.getLogger(ByteSizeValue.class));
+    /**
+     * We have to lazy initialize the deprecation logger as otherwise a static logger here would be constructed before logging is configured
+     * leading to a runtime failure (see {@link LogConfigurator#checkErrorListener()} ). The premature construction would come from any
+     * {@link ByteSizeValue} object constructed in, for example, settings in {@link org.elasticsearch.common.network.NetworkService}.
+     */
+    static class DeprecationLoggerHolder {
+        static DeprecationLogger deprecationLogger = new DeprecationLogger(LogManager.getLogger(ByteSizeValue.class));
+    }
 
     public static final ByteSizeValue ZERO = new ByteSizeValue(0, ByteSizeUnit.BYTES);
 
@@ -44,23 +51,14 @@ public class ByteSizeValue implements Writeable, Comparable<ByteSizeValue>, ToXC
     private final ByteSizeUnit unit;
 
     public ByteSizeValue(StreamInput in) throws IOException {
-        if (in.getVersion().before(Version.V_6_2_0)) {
-            size = in.readVLong();
-            unit = ByteSizeUnit.BYTES;
-        } else {
-            size = in.readZLong();
-            unit = ByteSizeUnit.readFrom(in);
-        }
+        size = in.readZLong();
+        unit = ByteSizeUnit.readFrom(in);
     }
 
     @Override
     public void writeTo(StreamOutput out) throws IOException {
-        if (out.getVersion().before(Version.V_6_2_0)) {
-            out.writeVLong(getBytes());
-        } else {
-            out.writeZLong(size);
-            unit.writeTo(out);
-        }
+        out.writeZLong(size);
+        unit.writeTo(out);
     }
 
     public ByteSizeValue(long bytes) {
@@ -237,7 +235,7 @@ public class ByteSizeValue implements Writeable, Comparable<ByteSizeValue>, ToXC
             } catch (final NumberFormatException e) {
                 try {
                     final double doubleValue = Double.parseDouble(s);
-                    deprecationLogger.deprecated(
+                    DeprecationLoggerHolder.deprecationLogger.deprecated(
                             "Fractional bytes values are deprecated. Use non-fractional bytes values instead: [{}] found for setting [{}]",
                             initialInput, settingName);
                     return new ByteSizeValue((long) (doubleValue * unit.toBytes(1)));

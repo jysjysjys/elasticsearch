@@ -21,7 +21,7 @@ package org.elasticsearch.cluster.routing.allocation.decider;
 
 import java.util.Locale;
 
-import org.elasticsearch.cluster.metadata.IndexMetaData;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.routing.RecoverySource;
 import org.elasticsearch.cluster.routing.RoutingNode;
 import org.elasticsearch.cluster.routing.ShardRouting;
@@ -86,26 +86,31 @@ public class EnableAllocationDecider extends AllocationDecider {
         clusterSettings.addSettingsUpdateConsumer(CLUSTER_ROUTING_REBALANCE_ENABLE_SETTING, this::setEnableRebalance);
     }
 
-    public void setEnableRebalance(Rebalance enableRebalance) {
+    private void setEnableRebalance(Rebalance enableRebalance) {
         this.enableRebalance = enableRebalance;
     }
 
-    public void setEnableAllocation(Allocation enableAllocation) {
+    private void setEnableAllocation(Allocation enableAllocation) {
         this.enableAllocation = enableAllocation;
     }
 
     @Override
     public Decision canAllocate(ShardRouting shardRouting, RoutingNode node, RoutingAllocation allocation) {
+        return canAllocate(shardRouting, allocation);
+    }
+
+    @Override
+    public Decision canAllocate(ShardRouting shardRouting, RoutingAllocation allocation) {
         if (allocation.ignoreDisable()) {
             return allocation.decision(Decision.YES, NAME,
                 "explicitly ignoring any disabling of allocation due to manual allocation commands via the reroute API");
         }
 
-        final IndexMetaData indexMetaData = allocation.metaData().getIndexSafe(shardRouting.index());
+        final IndexMetadata indexMetadata = allocation.metadata().getIndexSafe(shardRouting.index());
         final Allocation enable;
         final boolean usedIndexSetting;
-        if (INDEX_ROUTING_ALLOCATION_ENABLE_SETTING.exists(indexMetaData.getSettings())) {
-            enable = INDEX_ROUTING_ALLOCATION_ENABLE_SETTING.get(indexMetaData.getSettings());
+        if (INDEX_ROUTING_ALLOCATION_ENABLE_SETTING.exists(indexMetadata.getSettings())) {
+            enable = INDEX_ROUTING_ALLOCATION_ENABLE_SETTING.get(indexMetadata.getSettings());
             usedIndexSetting = true;
         } else {
             enable = this.enableAllocation;
@@ -137,12 +142,31 @@ public class EnableAllocationDecider extends AllocationDecider {
     }
 
     @Override
-    public Decision canRebalance(ShardRouting shardRouting, RoutingAllocation allocation) {
+    public Decision canRebalance(RoutingAllocation allocation) {
         if (allocation.ignoreDisable()) {
-            return allocation.decision(Decision.YES, NAME, "allocation is explicitly ignoring any disabling of relocation");
+            return allocation.decision(Decision.YES, NAME, "allocation is explicitly ignoring any disabling of rebalancing");
         }
 
-        Settings indexSettings = allocation.metaData().getIndexSafe(shardRouting.index()).getSettings();
+        if (enableRebalance == Rebalance.NONE) {
+            for (IndexMetadata indexMetadata : allocation.metadata()) {
+                if (INDEX_ROUTING_REBALANCE_ENABLE_SETTING.exists(indexMetadata.getSettings())
+                    && INDEX_ROUTING_REBALANCE_ENABLE_SETTING.get(indexMetadata.getSettings()) != Rebalance.NONE) {
+                    return allocation.decision(Decision.YES, NAME, "rebalancing is permitted on one or more indices");
+                }
+            }
+            return allocation.decision(Decision.NO, NAME, "no rebalancing is allowed due to %s", setting(enableRebalance, false));
+        }
+
+        return allocation.decision(Decision.YES, NAME, "rebalancing is not globally disabled");
+    }
+
+    @Override
+    public Decision canRebalance(ShardRouting shardRouting, RoutingAllocation allocation) {
+        if (allocation.ignoreDisable()) {
+            return allocation.decision(Decision.YES, NAME, "allocation is explicitly ignoring any disabling of rebalancing");
+        }
+
+        Settings indexSettings = allocation.metadata().getIndexSafe(shardRouting.index()).getSettings();
         final Rebalance enable;
         final boolean usedIndexSetting;
         if (INDEX_ROUTING_REBALANCE_ENABLE_SETTING.exists(indexSettings)) {

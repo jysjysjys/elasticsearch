@@ -11,12 +11,14 @@ import org.elasticsearch.action.search.ClearScrollAction;
 import org.elasticsearch.action.search.ClearScrollRequest;
 import org.elasticsearch.action.search.ClearScrollResponse;
 import org.elasticsearch.action.search.SearchPhaseExecutionException;
+import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.ShardSearchFailure;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.common.document.DocumentField;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.util.concurrent.ThreadContext;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
@@ -28,8 +30,12 @@ import org.elasticsearch.search.SearchHits;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.elasticsearch.xpack.ml.datafeed.extractor.fields.ExtractedField;
-import org.elasticsearch.xpack.ml.datafeed.extractor.fields.TimeBasedExtractedFields;
+import org.elasticsearch.xpack.core.ml.datafeed.DatafeedTimingStats;
+import org.elasticsearch.xpack.ml.datafeed.DatafeedTimingStatsReporter;
+import org.elasticsearch.xpack.ml.datafeed.DatafeedTimingStatsReporter.DatafeedTimingStatsPersister;
+import org.elasticsearch.xpack.ml.extractor.DocValueField;
+import org.elasticsearch.xpack.ml.extractor.ExtractedField;
+import org.elasticsearch.xpack.ml.extractor.TimeField;
 import org.junit.Before;
 import org.mockito.ArgumentCaptor;
 
@@ -71,6 +77,7 @@ public class ScrollDataExtractorTests extends ESTestCase {
     private int scrollSize;
     private long initScrollStartTime;
     private ActionFuture<ClearScrollResponse> clearScrollFuture;
+    private DatafeedTimingStatsReporter timingStatsReporter;
 
     private class TestDataExtractor extends ScrollDataExtractor {
 
@@ -81,7 +88,7 @@ public class ScrollDataExtractorTests extends ESTestCase {
         }
 
         TestDataExtractor(ScrollDataExtractorContext context) {
-            super(client, context);
+            super(client, context, timingStatsReporter);
         }
 
         @Override
@@ -121,6 +128,7 @@ public class ScrollDataExtractorTests extends ESTestCase {
     }
 
     @Before
+    @SuppressWarnings("unchecked")
     public void setUpTests() {
         ThreadPool threadPool = mock(ThreadPool.class);
         when(threadPool.getThreadContext()).thenReturn(new ThreadContext(Settings.EMPTY));
@@ -129,9 +137,9 @@ public class ScrollDataExtractorTests extends ESTestCase {
         capturedSearchRequests = new ArrayList<>();
         capturedContinueScrollIds = new ArrayList<>();
         jobId = "test-job";
-        ExtractedField timeField = ExtractedField.newField("time", ExtractedField.ExtractionMethod.DOC_VALUE);
+        ExtractedField timeField = new TimeField("time", ExtractedField.Method.DOC_VALUE);
         extractedFields = new TimeBasedExtractedFields(timeField,
-                Arrays.asList(timeField, ExtractedField.newField("field_1", ExtractedField.ExtractionMethod.DOC_VALUE)));
+                Arrays.asList(timeField, new DocValueField("field_1", Collections.singleton("keyword"))));
         indices = Arrays.asList("index-1", "index-2");
         query = QueryBuilders.matchAllQuery();
         scriptFields = Collections.emptyList();
@@ -140,6 +148,7 @@ public class ScrollDataExtractorTests extends ESTestCase {
         clearScrollFuture = mock(ActionFuture.class);
         capturedClearScrollRequests = ArgumentCaptor.forClass(ClearScrollRequest.class);
         when(client.execute(same(ClearScrollAction.INSTANCE), capturedClearScrollRequests.capture())).thenReturn(clearScrollFuture);
+        timingStatsReporter = new DatafeedTimingStatsReporter(new DatafeedTimingStats(jobId), mock(DatafeedTimingStatsPersister.class));
     }
 
     public void testSinglePageExtraction() throws IOException {
@@ -296,6 +305,9 @@ public class ScrollDataExtractorTests extends ESTestCase {
         extractor.setNextResponse(createErrorResponse());
         assertThat(extractor.hasNext(), is(true));
         expectThrows(IOException.class, extractor::next);
+
+        List<String> capturedClearScrollIds = getCapturedClearScrollIds();
+        assertThat(capturedClearScrollIds.size(), equalTo(1));
     }
 
     public void testExtractionGivenInitSearchResponseHasShardFailures() throws IOException {
@@ -305,6 +317,11 @@ public class ScrollDataExtractorTests extends ESTestCase {
 
         assertThat(extractor.hasNext(), is(true));
         expectThrows(IOException.class, extractor::next);
+
+        List<String> capturedClearScrollIds = getCapturedClearScrollIds();
+        // We should clear the scroll context twice: once for the first search when we retry
+        // and once after the retry where we'll have an exception
+        assertThat(capturedClearScrollIds.size(), equalTo(2));
     }
 
     public void testExtractionGivenInitSearchResponseEncounteredUnavailableShards() throws IOException {
@@ -341,6 +358,9 @@ public class ScrollDataExtractorTests extends ESTestCase {
         // A second failure is not tolerated
         assertThat(extractor.hasNext(), is(true));
         expectThrows(IOException.class, extractor::next);
+
+        List<String> capturedClearScrollIds = getCapturedClearScrollIds();
+        assertThat(capturedClearScrollIds.size(), equalTo(2));
     }
 
     public void testResetScollUsesLastResultTimestamp() throws IOException {
@@ -397,6 +417,9 @@ public class ScrollDataExtractorTests extends ESTestCase {
         // A second failure is not tolerated
         assertThat(extractor.hasNext(), is(true));
         expectThrows(SearchPhaseExecutionException.class, extractor::next);
+
+        List<String> capturedClearScrollIds = getCapturedClearScrollIds();
+        assertThat(capturedClearScrollIds.size(), equalTo(2));
     }
 
     public void testSearchPhaseExecutionExceptionOnInitScroll() throws IOException {
@@ -408,7 +431,9 @@ public class ScrollDataExtractorTests extends ESTestCase {
         expectThrows(IOException.class, extractor::next);
 
         List<String> capturedClearScrollIds = getCapturedClearScrollIds();
-        assertThat(capturedClearScrollIds.isEmpty(), is(true));
+        // We should clear the scroll context twice: once for the first search when we retry
+        // and once after the retry where we'll have an exception
+        assertThat(capturedClearScrollIds.size(), equalTo(2));
     }
 
     public void testDomainSplitScriptField() throws IOException {
@@ -420,7 +445,7 @@ public class ScrollDataExtractorTests extends ESTestCase {
 
         List<SearchSourceBuilder.ScriptField> sFields = Arrays.asList(withoutSplit, withSplit);
         ScrollDataExtractorContext context = new ScrollDataExtractorContext(jobId, extractedFields, indices,
-                query, sFields, scrollSize, 1000, 2000, Collections.emptyMap());
+                query, sFields, scrollSize, 1000, 2000, Collections.emptyMap(), SearchRequest.DEFAULT_INDICES_OPTIONS);
 
         TestDataExtractor extractor = new TestDataExtractor(context);
 
@@ -466,7 +491,7 @@ public class ScrollDataExtractorTests extends ESTestCase {
 
     private ScrollDataExtractorContext createContext(long start, long end) {
         return new ScrollDataExtractorContext(jobId, extractedFields, indices, query, scriptFields, scrollSize, start, end,
-                Collections.emptyMap());
+            Collections.emptyMap(), SearchRequest.DEFAULT_INDICES_OPTIONS);
     }
 
     private SearchResponse createEmptySearchResponse() {
@@ -490,12 +515,14 @@ public class ScrollDataExtractorTests extends ESTestCase {
         SearchHits searchHits = new SearchHits(hits.toArray(new SearchHit[0]),
             new TotalHits(hits.size(), TotalHits.Relation.EQUAL_TO), 1);
         when(searchResponse.getHits()).thenReturn(searchHits);
+        when(searchResponse.getTook()).thenReturn(TimeValue.timeValueMillis(randomNonNegativeLong()));
         return searchResponse;
     }
 
     private SearchResponse createErrorResponse() {
         SearchResponse searchResponse = mock(SearchResponse.class);
         when(searchResponse.status()).thenReturn(RestStatus.INTERNAL_SERVER_ERROR);
+        when(searchResponse.getScrollId()).thenReturn(randomAlphaOfLength(1000));
         return searchResponse;
     }
 
@@ -505,6 +532,7 @@ public class ScrollDataExtractorTests extends ESTestCase {
         when(searchResponse.getShardFailures()).thenReturn(
                 new ShardSearchFailure[] { new ShardSearchFailure(new RuntimeException("shard failed"))});
         when(searchResponse.getFailedShards()).thenReturn(1);
+        when(searchResponse.getScrollId()).thenReturn(randomAlphaOfLength(1000));
         return searchResponse;
     }
 

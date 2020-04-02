@@ -47,9 +47,9 @@ public abstract class InternalMappedTerms<A extends InternalTerms<A, B>, B exten
     protected long docCountError;
 
     protected InternalMappedTerms(String name, BucketOrder order, int requiredSize, long minDocCount,
-            List<PipelineAggregator> pipelineAggregators, Map<String, Object> metaData, DocValueFormat format, int shardSize,
+            List<PipelineAggregator> pipelineAggregators, Map<String, Object> metadata, DocValueFormat format, int shardSize,
             boolean showTermDocCountError, long otherDocCount, List<B> buckets, long docCountError) {
-        super(name, order, requiredSize, minDocCount, pipelineAggregators, metaData);
+        super(name, order, requiredSize, minDocCount, pipelineAggregators, metadata);
         this.format = format;
         this.shardSize = shardSize;
         this.showTermDocCountError = showTermDocCountError;
@@ -115,10 +115,13 @@ public abstract class InternalMappedTerms<A extends InternalTerms<A, B>, B exten
     }
 
     @Override
-    protected boolean doEquals(Object obj) {
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (obj == null || getClass() != obj.getClass()) return false;
+        if (super.equals(obj) == false) return false;
+
         InternalMappedTerms<?,?> that = (InternalMappedTerms<?,?>) obj;
-        return super.doEquals(obj)
-                && Objects.equals(buckets, that.buckets)
+        return Objects.equals(buckets, that.buckets)
                 && Objects.equals(format, that.format)
                 && Objects.equals(otherDocCount, that.otherDocCount)
                 && Objects.equals(showTermDocCountError, that.showTermDocCountError)
@@ -127,8 +130,8 @@ public abstract class InternalMappedTerms<A extends InternalTerms<A, B>, B exten
     }
 
     @Override
-    protected int doHashCode() {
-        return Objects.hash(super.doHashCode(), buckets, format, otherDocCount, showTermDocCountError, shardSize);
+    public int hashCode() {
+        return Objects.hash(super.hashCode(), buckets, format, otherDocCount, showTermDocCountError, shardSize);
     }
 
     @Override

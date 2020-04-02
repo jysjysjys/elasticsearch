@@ -44,7 +44,6 @@ import java.util.TreeMap;
 import static org.elasticsearch.common.unit.TimeValue.timeValueHours;
 import static org.elasticsearch.common.unit.TimeValue.timeValueMinutes;
 import static org.elasticsearch.common.unit.TimeValue.timeValueSeconds;
-import static org.elasticsearch.search.aggregations.bucket.histogram.AutoDateHistogramAggregationBuilder.createRounding;
 import static org.hamcrest.Matchers.equalTo;
 
 public class InternalAutoDateHistogramTests extends InternalMultiBucketAggregationTestCase<InternalAutoDateHistogram> {
@@ -61,10 +60,10 @@ public class InternalAutoDateHistogramTests extends InternalMultiBucketAggregati
     @Override
     protected InternalAutoDateHistogram createTestInstance(String name,
                                                        List<PipelineAggregator> pipelineAggregators,
-                                                       Map<String, Object> metaData,
+                                                       Map<String, Object> metadata,
                                                        InternalAggregations aggregations) {
 
-        roundingInfos = AutoDateHistogramAggregationBuilder.buildRoundings(null);
+        roundingInfos = AutoDateHistogramAggregationBuilder.buildRoundings(null, null);
         int nbBuckets = randomNumberOfBuckets();
         int targetBuckets = randomIntBetween(1, nbBuckets * 2 + 1);
         List<InternalAutoDateHistogram.Bucket> buckets = new ArrayList<>(nbBuckets);
@@ -80,7 +79,7 @@ public class InternalAutoDateHistogramTests extends InternalMultiBucketAggregati
         }
         InternalAggregations subAggregations = new InternalAggregations(Collections.emptyList());
         BucketInfo bucketInfo = new BucketInfo(roundingInfos, randomIntBetween(0, roundingInfos.length - 1), subAggregations);
-        return new InternalAutoDateHistogram(name, buckets, targetBuckets, bucketInfo, format, pipelineAggregators, metaData, 1);
+        return new InternalAutoDateHistogram(name, buckets, targetBuckets, bucketInfo, format, pipelineAggregators, metadata, 1);
     }
 
     /*
@@ -93,12 +92,12 @@ public class InternalAutoDateHistogramTests extends InternalMultiBucketAggregati
         // Since we pass 0 as the starting index to getAppropriateRounding, we'll also use
         // an innerInterval that is quite large, such that targetBuckets * roundings[i].getMaximumInnerInterval()
         // will be larger than the estimate.
-        roundings[0] = new RoundingInfo(createRounding(Rounding.DateTimeUnit.SECOND_OF_MINUTE, timeZone),
-            1000L, "s",1000);
-        roundings[1] = new RoundingInfo(createRounding(Rounding.DateTimeUnit.MINUTES_OF_HOUR, timeZone),
-            60 * 1000L, "m",1, 5, 10, 30);
-        roundings[2] = new RoundingInfo(createRounding(Rounding.DateTimeUnit.HOUR_OF_DAY, timeZone),
-            60 * 60 * 1000L, "h",1, 3, 12);
+        roundings[0] = new RoundingInfo(Rounding.DateTimeUnit.SECOND_OF_MINUTE, timeZone,
+            1000L, "s", 1000);
+        roundings[1] = new RoundingInfo(Rounding.DateTimeUnit.MINUTES_OF_HOUR, timeZone,
+            60 * 1000L, "m", 1, 5, 10, 30);
+        roundings[2] = new RoundingInfo(Rounding.DateTimeUnit.HOUR_OF_DAY, timeZone,
+            60 * 60 * 1000L, "h", 1, 3, 12);
 
         OffsetDateTime timestamp = Instant.parse("2018-01-01T00:00:01.000Z").atOffset(ZoneOffset.UTC);
         // We want to pass a roundingIdx of zero, because in order to reproduce this bug, we need the function
@@ -109,9 +108,7 @@ public class InternalAutoDateHistogramTests extends InternalMultiBucketAggregati
         assertThat(result, equalTo(2));
     }
 
-    @Override
-    @AwaitsFix(bugUrl = "https://github.com/elastic/elasticsearch/issues/39497")
-    // TODO: When resolving the above AwaitsFix, just delete this override. Method is only overriden to apply the annotation.
+    @AwaitsFix(bugUrl = "https://github.com/elastic/elasticsearch/issues/54540")
     public void testReduceRandom() {
         super.testReduceRandom();
     }
@@ -242,7 +239,7 @@ public class InternalAutoDateHistogramTests extends InternalMultiBucketAggregati
         int targetBuckets = instance.getTargetBuckets();
         BucketInfo bucketInfo = instance.getBucketInfo();
         List<PipelineAggregator> pipelineAggregators = instance.pipelineAggregators();
-        Map<String, Object> metaData = instance.getMetaData();
+        Map<String, Object> metadata = instance.getMetadata();
         switch (between(0, 3)) {
         case 0:
             name += randomAlphaOfLength(5);
@@ -257,16 +254,16 @@ public class InternalAutoDateHistogramTests extends InternalMultiBucketAggregati
             bucketInfo = new BucketInfo(bucketInfo.roundingInfos, roundingIdx, bucketInfo.emptySubAggregations);
             break;
         case 3:
-            if (metaData == null) {
-                metaData = new HashMap<>(1);
+            if (metadata == null) {
+                metadata = new HashMap<>(1);
             } else {
-                metaData = new HashMap<>(instance.getMetaData());
+                metadata = new HashMap<>(instance.getMetadata());
             }
-            metaData.put(randomAlphaOfLength(15), randomInt());
+            metadata.put(randomAlphaOfLength(15), randomInt());
             break;
         default:
             throw new AssertionError("Illegal randomisation branch");
         }
-        return new InternalAutoDateHistogram(name, buckets, targetBuckets, bucketInfo, format, pipelineAggregators, metaData, 1);
+        return new InternalAutoDateHistogram(name, buckets, targetBuckets, bucketInfo, format, pipelineAggregators, metadata, 1);
     }
 }

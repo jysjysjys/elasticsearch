@@ -19,7 +19,6 @@
 
 package org.elasticsearch.search.aggregations.pipeline;
 
-import org.elasticsearch.Version;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.search.DocValueFormat;
@@ -39,8 +38,8 @@ public class PercentilesBucketPipelineAggregator extends BucketMetricsPipelineAg
     private List<Double> data;
 
     PercentilesBucketPipelineAggregator(String name, double[] percents, boolean keyed, String[] bucketsPaths,
-                                        GapPolicy gapPolicy, DocValueFormat formatter, Map<String, Object> metaData) {
-        super(name, bucketsPaths, gapPolicy, formatter, metaData);
+                                        GapPolicy gapPolicy, DocValueFormat formatter, Map<String, Object> metadata) {
+        super(name, bucketsPaths, gapPolicy, formatter, metadata);
         this.percents = percents;
         this.keyed = keyed;
     }
@@ -51,19 +50,13 @@ public class PercentilesBucketPipelineAggregator extends BucketMetricsPipelineAg
     public PercentilesBucketPipelineAggregator(StreamInput in) throws IOException {
         super(in);
         percents = in.readDoubleArray();
-
-        if (in.getVersion().onOrAfter(Version.V_7_0_0)) {
-            keyed = in.readBoolean();
-        }
+        keyed = in.readBoolean();
     }
 
     @Override
     public void innerWriteTo(StreamOutput out) throws IOException {
         out.writeDoubleArray(percents);
-
-        if (out.getVersion().onOrAfter(Version.V_7_0_0)) {
-            out.writeBoolean(keyed);
-        }
+        out.writeBoolean(keyed);
     }
 
     @Override

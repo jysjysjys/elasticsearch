@@ -47,10 +47,10 @@ public class SignificantLongTermsAggregator extends LongTermsAggregator {
             DocValueFormat format, BucketCountThresholds bucketCountThresholds, SearchContext context, Aggregator parent,
             SignificanceHeuristic significanceHeuristic, SignificantTermsAggregatorFactory termsAggFactory,
             IncludeExclude.LongFilter includeExclude,
-            List<PipelineAggregator> pipelineAggregators, Map<String, Object> metaData) throws IOException {
+            List<PipelineAggregator> pipelineAggregators, Map<String, Object> metadata) throws IOException {
 
         super(name, factories, valuesSource, format, null, bucketCountThresholds, context, parent,
-                SubAggCollectionMode.DEPTH_FIRST, false, includeExclude, pipelineAggregators, metaData);
+                SubAggCollectionMode.BREADTH_FIRST, false, includeExclude, pipelineAggregators, metadata);
         this.significanceHeuristic = significanceHeuristic;
         this.termsAggFactory = termsAggFactory;
     }
@@ -88,7 +88,7 @@ public class SignificantLongTermsAggregator extends LongTermsAggregator {
                 continue;
             }
             if (spare == null) {
-                spare = new SignificantLongTerms.Bucket(0, 0, 0, 0, 0, null, format);
+                spare = new SignificantLongTerms.Bucket(0, 0, 0, 0, 0, null, format, 0);
             }
             spare.term = bucketOrds.get(i);
             spare.subsetDf = docCount;
@@ -106,14 +106,22 @@ public class SignificantLongTermsAggregator extends LongTermsAggregator {
             }
         }
 
-        final SignificantLongTerms.Bucket[] list = new SignificantLongTerms.Bucket[ordered.size()];
+        SignificantLongTerms.Bucket[] list = new SignificantLongTerms.Bucket[ordered.size()];
+        final long[] survivingBucketOrds = new long[ordered.size()];
         for (int i = ordered.size() - 1; i >= 0; i--) {
             final SignificantLongTerms.Bucket bucket = ordered.pop();
-            bucket.aggregations = bucketAggregations(bucket.bucketOrd);
+            survivingBucketOrds[i] = bucket.bucketOrd;
             list[i] = bucket;
         }
+
+        runDeferredCollections(survivingBucketOrds);
+
+        for (SignificantLongTerms.Bucket bucket : list) {
+            bucket.aggregations = bucketAggregations(bucket.bucketOrd);
+        }
+
         return new SignificantLongTerms(name, bucketCountThresholds.getRequiredSize(), bucketCountThresholds.getMinDocCount(),
-                pipelineAggregators(), metaData(), format, subsetSize, supersetSize, significanceHeuristic, Arrays.asList(list));
+                pipelineAggregators(), metadata(), format, subsetSize, supersetSize, significanceHeuristic, Arrays.asList(list));
     }
 
     @Override
@@ -123,7 +131,7 @@ public class SignificantLongTermsAggregator extends LongTermsAggregator {
         IndexReader topReader = searcher.getIndexReader();
         int supersetSize = topReader.numDocs();
         return new SignificantLongTerms(name, bucketCountThresholds.getRequiredSize(), bucketCountThresholds.getMinDocCount(),
-                pipelineAggregators(), metaData(), format, 0, supersetSize, significanceHeuristic, emptyList());
+                pipelineAggregators(), metadata(), format, 0, supersetSize, significanceHeuristic, emptyList());
     }
 
     @Override

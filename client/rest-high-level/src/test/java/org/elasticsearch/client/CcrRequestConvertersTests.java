@@ -29,19 +29,24 @@ import org.elasticsearch.client.ccr.DeleteAutoFollowPatternRequest;
 import org.elasticsearch.client.ccr.FollowConfig;
 import org.elasticsearch.client.ccr.FollowInfoRequest;
 import org.elasticsearch.client.ccr.FollowStatsRequest;
+import org.elasticsearch.client.ccr.ForgetFollowerRequest;
 import org.elasticsearch.client.ccr.GetAutoFollowPatternRequest;
+import org.elasticsearch.client.ccr.PauseAutoFollowPatternRequest;
 import org.elasticsearch.client.ccr.PauseFollowRequest;
 import org.elasticsearch.client.ccr.PutAutoFollowPatternRequest;
 import org.elasticsearch.client.ccr.PutFollowRequest;
+import org.elasticsearch.client.ccr.ResumeAutoFollowPatternRequest;
 import org.elasticsearch.client.ccr.ResumeFollowRequest;
 import org.elasticsearch.client.ccr.UnfollowRequest;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.test.ESTestCase;
 
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Locale;
 
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.nullValue;
 
@@ -91,6 +96,20 @@ public class CcrRequestConvertersTests extends ESTestCase {
         assertThat(result.getEntity(), nullValue());
     }
 
+    public void testForgetFollower() throws IOException {
+        final ForgetFollowerRequest request = new ForgetFollowerRequest(
+                randomAlphaOfLength(8),
+                randomAlphaOfLength(8),
+                randomAlphaOfLength(8),
+                randomAlphaOfLength(8),
+                randomAlphaOfLength(8));
+        final Request convertedRequest = CcrRequestConverters.forgetFollower(request);
+        assertThat(convertedRequest.getMethod(), equalTo(HttpPost.METHOD_NAME));
+        assertThat(convertedRequest.getEndpoint(), equalTo("/" + request.leaderIndex() + "/_ccr/forget_follower"));
+        assertThat(convertedRequest.getParameters().keySet(), empty());
+        RequestConvertersTests.assertToXContentBody(request, convertedRequest.getEntity());
+    }
+
     public void testPutAutofollowPattern() throws Exception {
         PutAutoFollowPatternRequest putAutoFollowPatternRequest = new PutAutoFollowPatternRequest(randomAlphaOfLength(4),
             randomAlphaOfLength(4), Arrays.asList(generateRandomStringArray(4, 4, false)));
@@ -122,6 +141,26 @@ public class CcrRequestConvertersTests extends ESTestCase {
         Request result = CcrRequestConverters.getAutoFollowPattern(deleteAutoFollowPatternRequest);
         assertThat(result.getMethod(), equalTo(HttpGet.METHOD_NAME));
         assertThat(result.getEndpoint(), equalTo("/_ccr/auto_follow/" + deleteAutoFollowPatternRequest.getName()));
+        assertThat(result.getParameters().size(), equalTo(0));
+        assertThat(result.getEntity(), nullValue());
+    }
+
+    public void testPauseAutofollowPattern() throws Exception {
+        PauseAutoFollowPatternRequest pauseAutoFollowPatternRequest = new PauseAutoFollowPatternRequest(randomAlphaOfLength(4));
+
+        Request result = CcrRequestConverters.pauseAutoFollowPattern(pauseAutoFollowPatternRequest);
+        assertThat(result.getMethod(), equalTo(HttpPost.METHOD_NAME));
+        assertThat(result.getEndpoint(), equalTo("/_ccr/auto_follow/" + pauseAutoFollowPatternRequest.getName() + "/pause"));
+        assertThat(result.getParameters().size(), equalTo(0));
+        assertThat(result.getEntity(), nullValue());
+    }
+
+    public void testResumeAutofollowPattern() throws Exception {
+        ResumeAutoFollowPatternRequest resumeAutoFollowPatternRequest = new ResumeAutoFollowPatternRequest(randomAlphaOfLength(4));
+
+        Request result = CcrRequestConverters.resumeAutoFollowPattern(resumeAutoFollowPatternRequest);
+        assertThat(result.getMethod(), equalTo(HttpPost.METHOD_NAME));
+        assertThat(result.getEndpoint(), equalTo("/_ccr/auto_follow/" + resumeAutoFollowPatternRequest.getName() + "/resume"));
         assertThat(result.getParameters().size(), equalTo(0));
         assertThat(result.getEntity(), nullValue());
     }

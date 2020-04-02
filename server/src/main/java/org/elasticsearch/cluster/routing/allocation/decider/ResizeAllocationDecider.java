@@ -19,8 +19,7 @@
 
 package org.elasticsearch.cluster.routing.allocation.decider;
 
-import org.elasticsearch.action.admin.indices.shrink.ResizeAction;
-import org.elasticsearch.cluster.metadata.IndexMetaData;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.routing.RecoverySource;
 import org.elasticsearch.cluster.routing.RoutingNode;
 import org.elasticsearch.cluster.routing.ShardRouting;
@@ -46,27 +45,26 @@ public class ResizeAllocationDecider extends AllocationDecider {
         final UnassignedInfo unassignedInfo = shardRouting.unassignedInfo();
         if (unassignedInfo != null && shardRouting.recoverySource().getType() == RecoverySource.Type.LOCAL_SHARDS) {
             // we only make decisions here if we have an unassigned info and we have to recover from another index ie. split / shrink
-            final IndexMetaData indexMetaData = allocation.metaData().getIndexSafe(shardRouting.index());
-            Index resizeSourceIndex = indexMetaData.getResizeSourceIndex();
+            final IndexMetadata indexMetadata = allocation.metadata().getIndexSafe(shardRouting.index());
+            Index resizeSourceIndex = indexMetadata.getResizeSourceIndex();
             assert resizeSourceIndex != null;
-            if (allocation.metaData().index(resizeSourceIndex) == null) {
+            if (allocation.metadata().index(resizeSourceIndex) == null) {
                 return allocation.decision(Decision.NO, NAME, "resize source index [%s] doesn't exists", resizeSourceIndex.toString());
             }
-            IndexMetaData sourceIndexMetaData = allocation.metaData().getIndexSafe(resizeSourceIndex);
-            if (indexMetaData.getNumberOfShards() < sourceIndexMetaData.getNumberOfShards()) {
-                // this only handles splits so far.
+            IndexMetadata sourceIndexMetadata = allocation.metadata().getIndexSafe(resizeSourceIndex);
+            if (indexMetadata.getNumberOfShards() < sourceIndexMetadata.getNumberOfShards()) {
+                // this only handles splits and clone so far.
                 return Decision.ALWAYS;
             }
 
-            ShardId shardId = IndexMetaData.selectSplitShard(shardRouting.id(), sourceIndexMetaData, indexMetaData.getNumberOfShards());
+            ShardId shardId = indexMetadata.getNumberOfShards() == sourceIndexMetadata.getNumberOfShards() ?
+                IndexMetadata.selectCloneShard(shardRouting.id(), sourceIndexMetadata, indexMetadata.getNumberOfShards()) :
+                IndexMetadata.selectSplitShard(shardRouting.id(), sourceIndexMetadata, indexMetadata.getNumberOfShards());
             ShardRouting sourceShardRouting = allocation.routingNodes().activePrimary(shardId);
             if (sourceShardRouting == null) {
                 return allocation.decision(Decision.NO, NAME, "source primary shard [%s] is not active", shardId);
             }
             if (node != null) { // we might get called from the 2 param canAllocate method..
-                if (node.node().getVersion().before(ResizeAction.COMPATIBILITY_VERSION)) {
-                    return allocation.decision(Decision.NO, NAME, "node [%s] is too old to split a shard", node.nodeId());
-                }
                 if (sourceShardRouting.currentNodeId().equals(node.nodeId())) {
                     return allocation.decision(Decision.YES, NAME, "source primary is allocated on this node");
                 } else {

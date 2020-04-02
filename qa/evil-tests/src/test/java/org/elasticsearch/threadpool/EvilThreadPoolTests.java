@@ -71,7 +71,7 @@ public class EvilThreadPoolTests extends ESTestCase {
 
     public void testExecutionErrorOnFixedESThreadPoolExecutor() throws InterruptedException {
         final EsThreadPoolExecutor fixedExecutor = EsExecutors.newFixed("test", 1, 1,
-            EsExecutors.daemonThreadFactory("test"), threadPool.getThreadContext());
+            EsExecutors.daemonThreadFactory("test"), threadPool.getThreadContext(), randomBoolean());
         try {
             checkExecutionError(getExecuteRunner(fixedExecutor));
             checkExecutionError(getSubmitRunner(fixedExecutor));
@@ -88,17 +88,6 @@ public class EvilThreadPoolTests extends ESTestCase {
             checkExecutionError(getSubmitRunner(scalingExecutor));
         } finally {
             ThreadPool.terminate(scalingExecutor, 10, TimeUnit.SECONDS);
-        }
-    }
-
-    public void testExecutionErrorOnAutoQueueFixedESThreadPoolExecutor() throws InterruptedException {
-        final EsThreadPoolExecutor autoQueueFixedExecutor = EsExecutors.newAutoQueueFixed("test", 1, 1,
-            1, 1, 1, TimeValue.timeValueSeconds(10), EsExecutors.daemonThreadFactory("test"), threadPool.getThreadContext());
-        try {
-            checkExecutionError(getExecuteRunner(autoQueueFixedExecutor));
-            checkExecutionError(getSubmitRunner(autoQueueFixedExecutor));
-        } finally {
-            ThreadPool.terminate(autoQueueFixedExecutor, 10, TimeUnit.SECONDS);
         }
     }
 
@@ -163,20 +152,12 @@ public class EvilThreadPoolTests extends ESTestCase {
 
     public void testExecutionExceptionOnDefaultThreadPoolTypes() throws InterruptedException {
         for (String executor : ThreadPool.THREAD_POOL_TYPES.keySet()) {
-            final boolean expectExceptionOnExecute =
-                // fixed_auto_queue_size wraps stuff into TimedRunnable, which is an AbstractRunnable
-                // TODO: this is dangerous as it will silently swallow exceptions, and possibly miss calling a response listener
-                ThreadPool.THREAD_POOL_TYPES.get(executor) != ThreadPool.ThreadPoolType.FIXED_AUTO_QUEUE_SIZE;
-            checkExecutionException(getExecuteRunner(threadPool.executor(executor)), expectExceptionOnExecute);
+            checkExecutionException(getExecuteRunner(threadPool.executor(executor)), true);
 
             // here, it's ok for the exception not to bubble up. Accessing the future will yield the exception
             checkExecutionException(getSubmitRunner(threadPool.executor(executor)), false);
 
-            final boolean expectExceptionOnSchedule =
-                // fixed_auto_queue_size wraps stuff into TimedRunnable, which is an AbstractRunnable
-                // TODO: this is dangerous as it will silently swallow exceptions, and possibly miss calling a response listener
-                ThreadPool.THREAD_POOL_TYPES.get(executor) != ThreadPool.ThreadPoolType.FIXED_AUTO_QUEUE_SIZE;
-            checkExecutionException(getScheduleRunner(executor), expectExceptionOnSchedule);
+            checkExecutionException(getScheduleRunner(executor), true);
         }
     }
 
@@ -188,7 +169,7 @@ public class EvilThreadPoolTests extends ESTestCase {
 
     public void testExecutionExceptionOnFixedESThreadPoolExecutor() throws InterruptedException {
         final EsThreadPoolExecutor fixedExecutor = EsExecutors.newFixed("test", 1, 1,
-            EsExecutors.daemonThreadFactory("test"), threadPool.getThreadContext());
+            EsExecutors.daemonThreadFactory("test"), threadPool.getThreadContext(), randomBoolean());
         try {
             checkExecutionException(getExecuteRunner(fixedExecutor), true);
             checkExecutionException(getSubmitRunner(fixedExecutor), false);
@@ -205,19 +186,6 @@ public class EvilThreadPoolTests extends ESTestCase {
             checkExecutionException(getSubmitRunner(scalingExecutor), false);
         } finally {
             ThreadPool.terminate(scalingExecutor, 10, TimeUnit.SECONDS);
-        }
-    }
-
-    public void testExecutionExceptionOnAutoQueueFixedESThreadPoolExecutor() throws InterruptedException {
-        final EsThreadPoolExecutor autoQueueFixedExecutor = EsExecutors.newAutoQueueFixed("test", 1, 1,
-            1, 1, 1, TimeValue.timeValueSeconds(10), EsExecutors.daemonThreadFactory("test"), threadPool.getThreadContext());
-        try {
-            // fixed_auto_queue_size wraps stuff into TimedRunnable, which is an AbstractRunnable
-            // TODO: this is dangerous as it will silently swallow exceptions, and possibly miss calling a response listener
-            checkExecutionException(getExecuteRunner(autoQueueFixedExecutor), false);
-            checkExecutionException(getSubmitRunner(autoQueueFixedExecutor), false);
-        } finally {
-            ThreadPool.terminate(autoQueueFixedExecutor, 10, TimeUnit.SECONDS);
         }
     }
 

@@ -34,8 +34,8 @@ public class InternalMin extends InternalNumericMetricsAggregation.SingleValue i
     private final double min;
 
     public InternalMin(String name, double min, DocValueFormat formatter, List<PipelineAggregator> pipelineAggregators,
-            Map<String, Object> metaData) {
-        super(name, pipelineAggregators, metaData);
+            Map<String, Object> metadata) {
+        super(name, pipelineAggregators, metadata);
         this.min = min;
         this.format = formatter;
     }
@@ -71,12 +71,12 @@ public class InternalMin extends InternalNumericMetricsAggregation.SingleValue i
     }
 
     @Override
-    public InternalMin doReduce(List<InternalAggregation> aggregations, ReduceContext reduceContext) {
+    public InternalMin reduce(List<InternalAggregation> aggregations, ReduceContext reduceContext) {
         double min = Double.POSITIVE_INFINITY;
         for (InternalAggregation aggregation : aggregations) {
             min = Math.min(min, ((InternalMin) aggregation).min);
         }
-        return new InternalMin(getName(), min, this.format, pipelineAggregators(), getMetaData());
+        return new InternalMin(getName(), min, this.format, pipelineAggregators(), getMetadata());
     }
 
     @Override
@@ -90,12 +90,15 @@ public class InternalMin extends InternalNumericMetricsAggregation.SingleValue i
     }
 
     @Override
-    protected int doHashCode() {
-        return Objects.hash(min);
+    public int hashCode() {
+        return Objects.hash(super.hashCode(), min);
     }
 
     @Override
-    protected boolean doEquals(Object obj) {
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (obj == null || getClass() != obj.getClass()) return false;
+        if (super.equals(obj) == false) return false;
         InternalMin other = (InternalMin) obj;
         return Objects.equals(min, other.min);
     }

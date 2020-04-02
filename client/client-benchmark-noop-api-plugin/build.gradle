@@ -33,8 +33,6 @@ assemble.enabled = false
 dependencyLicenses.enabled = false
 dependenciesInfo.enabled = false
 
-compileJava.options.compilerArgs << "-Xlint:-cast,-deprecation,-rawtypes,-try,-unchecked"
-
 // no unit tests
-unitTest.enabled = false
+test.enabled = false
 integTest.enabled = false

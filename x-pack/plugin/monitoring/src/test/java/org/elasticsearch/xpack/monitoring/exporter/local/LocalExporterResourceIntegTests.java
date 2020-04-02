@@ -6,7 +6,7 @@
 package org.elasticsearch.xpack.monitoring.exporter.local;
 
 import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.cluster.metadata.IndexTemplateMetaData;
+import org.elasticsearch.cluster.metadata.IndexTemplateMetadata;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentType;
@@ -28,7 +28,7 @@ import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
 
 @ESIntegTestCase.ClusterScope(scope = TEST,
-                              numDataNodes = 1, numClientNodes = 0, transportClientRatio = 0.0, supportsDedicatedMasters = false)
+                              numDataNodes = 1, numClientNodes = 0, supportsDedicatedMasters = false)
 public class LocalExporterResourceIntegTests extends LocalExporterIntegTestCase {
 
     public LocalExporterResourceIntegTests() throws Exception {
@@ -81,8 +81,8 @@ public class LocalExporterResourceIntegTests extends LocalExporterIntegTestCase 
                 .field("index.number_of_replicas", 0)
             .endObject()
             .startObject("mappings")
-                // Still need use type, RestPutIndexTemplateAction#prepareRequestSource has logic that adds type if missing
-                .startObject("doc")
+                // The internal representation still requires a default type of _doc
+                .startObject("_doc")
                     .startObject("_meta")
                         .field("test", true)
                     .endObject()
@@ -193,8 +193,8 @@ public class LocalExporterResourceIntegTests extends LocalExporterIntegTestCase 
     private void assertTemplateNotUpdated() {
         final String name = MonitoringTemplateUtils.templateName(system.getSystem());
 
-        for (IndexTemplateMetaData template : client().admin().indices().prepareGetTemplates(name).get().getIndexTemplates()) {
-            final String docMapping = template.getMappings().get("doc").toString();
+        for (IndexTemplateMetadata template : client().admin().indices().prepareGetTemplates(name).get().getIndexTemplates()) {
+            final String docMapping = template.getMappings().toString();
 
             assertThat(docMapping, notNullValue());
             assertThat(docMapping, containsString("test"));

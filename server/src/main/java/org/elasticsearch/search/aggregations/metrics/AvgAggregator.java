@@ -48,8 +48,8 @@ class AvgAggregator extends NumericMetricsAggregator.SingleValue {
     DocValueFormat format;
 
     AvgAggregator(String name, ValuesSource.Numeric valuesSource, DocValueFormat formatter, SearchContext context,
-            Aggregator parent, List<PipelineAggregator> pipelineAggregators, Map<String, Object> metaData) throws IOException {
-        super(name, context, parent, pipelineAggregators, metaData);
+            Aggregator parent, List<PipelineAggregator> pipelineAggregators, Map<String, Object> metadata) throws IOException {
+        super(name, context, parent, pipelineAggregators, metadata);
         this.valuesSource = valuesSource;
         this.format = formatter;
         if (valuesSource != null) {
@@ -73,6 +73,8 @@ class AvgAggregator extends NumericMetricsAggregator.SingleValue {
         }
         final BigArrays bigArrays = context.bigArrays();
         final SortedNumericDoubleValues values = valuesSource.doubleValues(ctx);
+        final CompensatedSum kahanSummation = new CompensatedSum(0, 0);
+
         return new LeafBucketCollectorBase(sub, values) {
             @Override
             public void collect(int doc, long bucket) throws IOException {
@@ -88,19 +90,15 @@ class AvgAggregator extends NumericMetricsAggregator.SingleValue {
                     double sum = sums.get(bucket);
                     double compensation = compensations.get(bucket);
 
+                    kahanSummation.reset(sum, compensation);
+
                     for (int i = 0; i < valueCount; i++) {
                         double value = values.nextValue();
-                        if (Double.isFinite(value) == false) {
-                            sum += value;
-                        } else if (Double.isFinite(sum)) {
-                            double corrected = value - compensation;
-                            double newSum = sum + corrected;
-                            compensation = (newSum - sum) - corrected;
-                            sum = newSum;
-                        }
+                        kahanSummation.add(value);
                     }
-                    sums.set(bucket, sum);
-                    compensations.set(bucket, compensation);
+
+                    sums.set(bucket, kahanSummation.value());
+                    compensations.set(bucket, kahanSummation.delta());
                 }
             }
         };
@@ -119,12 +117,12 @@ class AvgAggregator extends NumericMetricsAggregator.SingleValue {
         if (valuesSource == null || bucket >= sums.size()) {
             return buildEmptyAggregation();
         }
-        return new InternalAvg(name, sums.get(bucket), counts.get(bucket), format, pipelineAggregators(), metaData());
+        return new InternalAvg(name, sums.get(bucket), counts.get(bucket), format, pipelineAggregators(), metadata());
     }
 
     @Override
     public InternalAggregation buildEmptyAggregation() {
-        return new InternalAvg(name, 0.0, 0L, format, pipelineAggregators(), metaData());
+        return new InternalAvg(name, 0.0, 0L, format, pipelineAggregators(), metadata());
     }
 
     @Override

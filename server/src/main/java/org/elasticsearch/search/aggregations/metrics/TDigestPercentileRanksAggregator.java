@@ -22,7 +22,7 @@ import org.elasticsearch.search.DocValueFormat;
 import org.elasticsearch.search.aggregations.Aggregator;
 import org.elasticsearch.search.aggregations.InternalAggregation;
 import org.elasticsearch.search.aggregations.pipeline.PipelineAggregator;
-import org.elasticsearch.search.aggregations.support.ValuesSource.Numeric;
+import org.elasticsearch.search.aggregations.support.ValuesSource;
 import org.elasticsearch.search.internal.SearchContext;
 
 import java.io.IOException;
@@ -32,7 +32,7 @@ import java.util.Map;
 class TDigestPercentileRanksAggregator extends AbstractTDigestPercentilesAggregator {
 
     TDigestPercentileRanksAggregator(String name,
-                                        Numeric valuesSource,
+                                        ValuesSource valuesSource,
                                         SearchContext context,
                                          Aggregator parent,
                                         double[] percents,
@@ -40,8 +40,8 @@ class TDigestPercentileRanksAggregator extends AbstractTDigestPercentilesAggrega
                                         boolean keyed,
                                         DocValueFormat formatter,
                                         List<PipelineAggregator> pipelineAggregators,
-                                        Map<String, Object> metaData) throws IOException {
-        super(name, valuesSource, context, parent, percents, compression, keyed, formatter, pipelineAggregators, metaData);
+                                        Map<String, Object> metadata) throws IOException {
+        super(name, valuesSource, context, parent, percents, compression, keyed, formatter, pipelineAggregators, metadata);
     }
 
     @Override
@@ -50,14 +50,14 @@ class TDigestPercentileRanksAggregator extends AbstractTDigestPercentilesAggrega
         if (state == null) {
             return buildEmptyAggregation();
         } else {
-            return new InternalTDigestPercentileRanks(name, keys, state, keyed, formatter, pipelineAggregators(), metaData());
+            return new InternalTDigestPercentileRanks(name, keys, state, keyed, formatter, pipelineAggregators(), metadata());
         }
     }
 
     @Override
     public InternalAggregation buildEmptyAggregation() {
         return new InternalTDigestPercentileRanks(name, keys, new TDigestState(compression), keyed,
-            formatter, pipelineAggregators(), metaData());
+            formatter, pipelineAggregators(), metadata());
     }
 
     @Override
