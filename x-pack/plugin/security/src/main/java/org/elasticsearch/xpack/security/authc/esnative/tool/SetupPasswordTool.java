@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.security.authc.esnative.tool;
 
@@ -15,9 +16,9 @@ import org.elasticsearch.cli.LoggingAwareMultiCommand;
 import org.elasticsearch.cli.Terminal;
 import org.elasticsearch.cli.Terminal.Verbosity;
 import org.elasticsearch.cli.UserException;
-import org.elasticsearch.common.Booleans;
+import org.elasticsearch.core.Booleans;
 import org.elasticsearch.common.CheckedBiConsumer;
-import org.elasticsearch.common.CheckedFunction;
+import org.elasticsearch.core.CheckedFunction;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.settings.KeyStoreWrapper;
 import org.elasticsearch.common.settings.SecureString;
@@ -30,11 +31,14 @@ import org.elasticsearch.xpack.core.security.support.Validation;
 import org.elasticsearch.xpack.core.security.user.APMSystemUser;
 import org.elasticsearch.xpack.core.security.user.BeatsSystemUser;
 import org.elasticsearch.xpack.core.security.user.ElasticUser;
+import org.elasticsearch.xpack.core.security.user.KibanaSystemUser;
 import org.elasticsearch.xpack.core.security.user.KibanaUser;
 import org.elasticsearch.xpack.core.security.user.LogstashSystemUser;
 import org.elasticsearch.xpack.core.security.user.RemoteMonitoringUser;
 import org.elasticsearch.xpack.security.authc.esnative.ReservedRealm;
-import org.elasticsearch.xpack.security.authc.esnative.tool.HttpResponse.HttpResponseBuilder;
+import org.elasticsearch.xpack.security.tool.HttpResponse;
+import org.elasticsearch.xpack.security.tool.HttpResponse.HttpResponseBuilder;
+import org.elasticsearch.xpack.security.tool.CommandLineHttpClient;
 
 import javax.net.ssl.SSLException;
 import java.io.ByteArrayOutputStream;
@@ -46,7 +50,7 @@ import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -65,8 +69,10 @@ import static java.util.Arrays.asList;
 public class SetupPasswordTool extends LoggingAwareMultiCommand {
 
     private static final char[] CHARS = ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789").toCharArray();
-    public static final List<String> USERS = asList(ElasticUser.NAME, APMSystemUser.NAME, KibanaUser.NAME, LogstashSystemUser.NAME,
-        BeatsSystemUser.NAME, RemoteMonitoringUser.NAME);
+    public static final List<String> USERS = asList(ElasticUser.NAME, APMSystemUser.NAME, KibanaUser.NAME, KibanaSystemUser.NAME,
+        LogstashSystemUser.NAME, BeatsSystemUser.NAME, RemoteMonitoringUser.NAME);
+
+    public static final Map<String, String> USERS_WITH_SHARED_PASSWORDS = Map.of(KibanaSystemUser.NAME, KibanaUser.NAME);
 
     private final Function<Environment, CommandLineHttpClient> clientFunction;
     private final CheckedFunction<Environment, KeyStoreWrapper, Exception> keyStoreFunction;
@@ -412,7 +418,7 @@ public class SetupPasswordTool extends LoggingAwareMultiCommand {
                 terminal.errorPrintln("Failed to determine the health of the cluster running at " + url);
                 terminal.errorPrintln("Unexpected response code [" + httpResponse.getHttpStatus() + "] from calling GET " +
                     route.toString());
-                final String cause = getErrorCause(httpResponse);
+                final String cause = CommandLineHttpClient.getErrorCause(httpResponse);
                 if (cause != null) {
                     terminal.errorPrintln("Cause: " + cause);
                 }
@@ -471,7 +477,7 @@ public class SetupPasswordTool extends LoggingAwareMultiCommand {
                     terminal.errorPrintln("");
                     terminal.errorPrintln(
                             "Unexpected response code [" + httpResponse.getHttpStatus() + "] from calling PUT " + route.toString());
-                    String cause = getErrorCause(httpResponse);
+                    String cause = CommandLineHttpClient.getErrorCause(httpResponse);
                     if (cause != null) {
                         terminal.errorPrintln("Cause: " + cause);
                         terminal.errorPrintln("");
@@ -503,10 +509,18 @@ public class SetupPasswordTool extends LoggingAwareMultiCommand {
          */
         void changePasswords(CheckedFunction<String, SecureString, UserException> passwordFn,
                              CheckedBiConsumer<String, SecureString, Exception> successCallback, Terminal terminal) throws Exception {
-            Map<String, SecureString> passwordsMap = new HashMap<>(USERS.size());
+            Map<String, SecureString> passwordsMap = new LinkedHashMap<>(USERS.size());
             try {
                 for (String user : USERS) {
-                    passwordsMap.put(user, passwordFn.apply(user));
+                    if (USERS_WITH_SHARED_PASSWORDS.containsValue(user)) {
+                        continue;
+                    }
+
+                    SecureString password = passwordFn.apply(user);
+                    passwordsMap.put(user, password);
+                    if (USERS_WITH_SHARED_PASSWORDS.containsKey(user)) {
+                        passwordsMap.put(USERS_WITH_SHARED_PASSWORDS.get(user), password.clone());
+                    }
                 }
                 /*
                  * Change elastic user last. This tool will not run after the elastic user
@@ -548,32 +562,6 @@ public class SetupPasswordTool extends LoggingAwareMultiCommand {
         private URL createURL(URL url, String path, String query) throws MalformedURLException, URISyntaxException {
             return new URL(url, (url.toURI().getPath() + path).replaceAll("/+", "/") + query);
         }
-    }
-
-    private String getErrorCause(HttpResponse httpResponse) {
-        final Object error = httpResponse.getResponseBody().get("error");
-        if (error == null) {
-            return null;
-        }
-        if (error instanceof Map) {
-            Object reason = ((Map) error).get("reason");
-            if (reason != null) {
-                return reason.toString();
-            }
-            final Object root = ((Map) error).get("root_cause");
-            if (root != null && root instanceof Map) {
-                reason = ((Map) root).get("reason");
-                if (reason != null) {
-                    return reason.toString();
-                }
-                final Object type = ((Map) root).get("type");
-                if (type != null) {
-                    return (String) type;
-                }
-            }
-            return String.valueOf(((Map) error).get("type"));
-        }
-        return error.toString();
     }
 
     private byte[] toByteArray(InputStream is) throws IOException {

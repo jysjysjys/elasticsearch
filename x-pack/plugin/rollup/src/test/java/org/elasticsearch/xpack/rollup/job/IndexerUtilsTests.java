@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.rollup.job;
 
@@ -54,6 +55,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import static java.util.Collections.singletonList;
 import static org.elasticsearch.xpack.core.rollup.ConfigTestHelpers.randomDateHistogramGroupConfig;
@@ -90,15 +92,8 @@ public class IndexerUtilsTests extends AggregatorTestCase {
         IndexReader indexReader = DirectoryReader.open(directory);
         IndexSearcher indexSearcher = newIndexSearcher(indexReader);
 
-        DateFieldMapper.Builder builder = new DateFieldMapper.Builder(timestampField);
-        DateFieldMapper.DateFieldType timestampFieldType = builder.fieldType();
-        timestampFieldType.setHasDocValues(true);
-        timestampFieldType.setName(timestampField);
-
-        MappedFieldType valueFieldType = new NumberFieldMapper.NumberFieldType(NumberFieldMapper.NumberType.LONG);
-        valueFieldType.setName(valueField);
-        valueFieldType.setHasDocValues(true);
-        valueFieldType.setName(valueField);
+        DateFieldMapper.DateFieldType timestampFieldType = new DateFieldMapper.DateFieldType(timestampField);
+        MappedFieldType valueFieldType = new NumberFieldMapper.NumberFieldType(valueField, NumberFieldMapper.NumberType.LONG);
 
         // Setup the composite agg
         DateHistogramGroupConfig dateHistoGroupConfig
@@ -114,12 +109,12 @@ public class IndexerUtilsTests extends AggregatorTestCase {
         aggregator.preCollection();
         indexSearcher.search(new MatchAllDocsQuery(), aggregator);
         aggregator.postCollection();
-        CompositeAggregation composite = (CompositeAggregation) aggregator.buildAggregation(0L);
+        CompositeAggregation composite = (CompositeAggregation) aggregator.buildTopLevel();
         indexReader.close();
         directory.close();
 
         final GroupConfig groupConfig = randomGroupConfig(random());
-        List<IndexRequest> docs = IndexerUtils.processBuckets(composite, indexName, stats, groupConfig, "foo");
+        List<IndexRequest> docs = IndexerUtils.processBuckets(composite, indexName, stats, groupConfig, "foo").collect(Collectors.toList());
 
         assertThat(docs.size(), equalTo(numDocs));
         for (IndexRequest doc : docs) {
@@ -154,15 +149,8 @@ public class IndexerUtilsTests extends AggregatorTestCase {
         IndexReader indexReader = DirectoryReader.open(directory);
         IndexSearcher indexSearcher = newIndexSearcher(indexReader);
 
-        DateFieldMapper.Builder builder = new DateFieldMapper.Builder(timestampField);
-        DateFieldMapper.DateFieldType timestampFieldType = builder.fieldType();
-        timestampFieldType.setHasDocValues(true);
-        timestampFieldType.setName(timestampField);
-
-        MappedFieldType valueFieldType = new NumberFieldMapper.NumberFieldType(NumberFieldMapper.NumberType.LONG);
-        valueFieldType.setName(valueField);
-        valueFieldType.setHasDocValues(true);
-        valueFieldType.setName(valueField);
+        DateFieldMapper.DateFieldType timestampFieldType = new DateFieldMapper.DateFieldType(timestampField);
+        MappedFieldType valueFieldType = new NumberFieldMapper.NumberFieldType(valueField, NumberFieldMapper.NumberType.LONG);
 
         // Setup the composite agg
         //TODO swap this over to DateHistoConfig.Builder once DateInterval is in
@@ -182,12 +170,12 @@ public class IndexerUtilsTests extends AggregatorTestCase {
         aggregator.preCollection();
         indexSearcher.search(new MatchAllDocsQuery(), aggregator);
         aggregator.postCollection();
-        CompositeAggregation composite = (CompositeAggregation) aggregator.buildAggregation(0L);
+        CompositeAggregation composite = (CompositeAggregation) aggregator.buildTopLevel();
         indexReader.close();
         directory.close();
 
         final GroupConfig groupConfig = randomGroupConfig(random());
-        List<IndexRequest> docs = IndexerUtils.processBuckets(composite, indexName, stats, groupConfig, "foo");
+        List<IndexRequest> docs = IndexerUtils.processBuckets(composite, indexName, stats, groupConfig, "foo").collect(Collectors.toList());
 
         assertThat(docs.size(), equalTo(numDocs));
         for (IndexRequest doc : docs) {
@@ -219,10 +207,7 @@ public class IndexerUtilsTests extends AggregatorTestCase {
         IndexReader indexReader = DirectoryReader.open(directory);
         IndexSearcher indexSearcher = newIndexSearcher(indexReader);
 
-        MappedFieldType valueFieldType = new NumberFieldMapper.NumberFieldType(NumberFieldMapper.NumberType.LONG);
-        valueFieldType.setName(valueField);
-        valueFieldType.setHasDocValues(true);
-        valueFieldType.setName(valueField);
+        MappedFieldType valueFieldType = new NumberFieldMapper.NumberFieldType(valueField, NumberFieldMapper.NumberType.LONG);
 
         // Setup the composite agg
         TermsValuesSourceBuilder terms
@@ -238,12 +223,12 @@ public class IndexerUtilsTests extends AggregatorTestCase {
         aggregator.preCollection();
         indexSearcher.search(new MatchAllDocsQuery(), aggregator);
         aggregator.postCollection();
-        CompositeAggregation composite = (CompositeAggregation) aggregator.buildAggregation(0L);
+        CompositeAggregation composite = (CompositeAggregation) aggregator.buildTopLevel();
         indexReader.close();
         directory.close();
 
         final GroupConfig groupConfig = randomGroupConfig(random());
-        List<IndexRequest> docs = IndexerUtils.processBuckets(composite, indexName, stats, groupConfig, "foo");
+        List<IndexRequest> docs = IndexerUtils.processBuckets(composite, indexName, stats, groupConfig, "foo").collect(Collectors.toList());
 
         assertThat(docs.size(), equalTo(numDocs));
         for (IndexRequest doc : docs) {
@@ -278,15 +263,8 @@ public class IndexerUtilsTests extends AggregatorTestCase {
         IndexReader indexReader = DirectoryReader.open(directory);
         IndexSearcher indexSearcher = newIndexSearcher(indexReader);
 
-        DateFieldMapper.Builder builder = new DateFieldMapper.Builder(timestampField);
-        DateFieldMapper.DateFieldType timestampFieldType = builder.fieldType();
-        timestampFieldType.setHasDocValues(true);
-        timestampFieldType.setName(timestampField);
-
-        MappedFieldType valueFieldType = new NumberFieldMapper.NumberFieldType(NumberFieldMapper.NumberType.LONG);
-        valueFieldType.setName(valueField);
-        valueFieldType.setHasDocValues(true);
-        valueFieldType.setName(valueField);
+        DateFieldMapper.DateFieldType timestampFieldType = new DateFieldMapper.DateFieldType(timestampField);
+        MappedFieldType valueFieldType = new NumberFieldMapper.NumberFieldType(valueField, NumberFieldMapper.NumberType.LONG);
 
         // Setup the composite agg
         DateHistogramValuesSourceBuilder dateHisto
@@ -305,12 +283,12 @@ public class IndexerUtilsTests extends AggregatorTestCase {
         aggregator.preCollection();
         indexSearcher.search(new MatchAllDocsQuery(), aggregator);
         aggregator.postCollection();
-        CompositeAggregation composite = (CompositeAggregation) aggregator.buildAggregation(0L);
+        CompositeAggregation composite = (CompositeAggregation) aggregator.buildTopLevel();
         indexReader.close();
         directory.close();
 
         final GroupConfig groupConfig = randomGroupConfig(random());
-        List<IndexRequest> docs = IndexerUtils.processBuckets(composite, indexName, stats, groupConfig, "foo");
+        List<IndexRequest> docs = IndexerUtils.processBuckets(composite, indexName, stats, groupConfig, "foo").collect(Collectors.toList());
 
         assertThat(docs.size(), equalTo(numDocs));
         for (IndexRequest doc : docs) {
@@ -360,7 +338,8 @@ public class IndexerUtilsTests extends AggregatorTestCase {
         });
 
         GroupConfig groupConfig = new GroupConfig(randomDateHistogramGroupConfig(random()), new HistogramGroupConfig(1L, "abc"), null);
-        List<IndexRequest> docs = IndexerUtils.processBuckets(composite, "foo", new RollupIndexerJobStats(), groupConfig, "foo");
+        List<IndexRequest> docs = IndexerUtils.processBuckets(composite, "foo", new RollupIndexerJobStats(), groupConfig, "foo")
+            .collect(Collectors.toList());
         assertThat(docs.size(), equalTo(1));
         assertThat(docs.get(0).id(), equalTo("foo$c9LcrFqeFW92uN_Z7sv1hA"));
     }
@@ -410,7 +389,8 @@ public class IndexerUtilsTests extends AggregatorTestCase {
         });
 
         GroupConfig groupConfig = new GroupConfig(randomDateHistogramGroupConfig(random()), new HistogramGroupConfig(1, "abc"), null);
-        List<IndexRequest> docs = IndexerUtils.processBuckets(composite, "foo", new RollupIndexerJobStats(), groupConfig, "foo");
+        List<IndexRequest> docs = IndexerUtils.processBuckets(composite, "foo", new RollupIndexerJobStats(), groupConfig, "foo")
+            .collect(Collectors.toList());
         assertThat(docs.size(), equalTo(1));
         assertThat(docs.get(0).id(), equalTo("foo$VAFKZpyaEqYRPLyic57_qw"));
     }
@@ -437,7 +417,8 @@ public class IndexerUtilsTests extends AggregatorTestCase {
         });
 
         GroupConfig groupConfig = new GroupConfig(randomDateHistogramGroupConfig(random()), randomHistogramGroupConfig(random()), null);
-        List<IndexRequest> docs = IndexerUtils.processBuckets(composite, "foo", new RollupIndexerJobStats(), groupConfig, "foo");
+        List<IndexRequest> docs = IndexerUtils.processBuckets(composite, "foo", new RollupIndexerJobStats(), groupConfig, "foo")
+            .collect(Collectors.toList());
         assertThat(docs.size(), equalTo(1));
         assertFalse(Strings.isNullOrEmpty(docs.get(0).id()));
     }
@@ -472,15 +453,8 @@ public class IndexerUtilsTests extends AggregatorTestCase {
         IndexReader indexReader = DirectoryReader.open(directory);
         IndexSearcher indexSearcher = newIndexSearcher(indexReader);
 
-        MappedFieldType valueFieldType = new NumberFieldMapper.NumberFieldType(NumberFieldMapper.NumberType.LONG);
-        valueFieldType.setName(valueField);
-        valueFieldType.setHasDocValues(true);
-        valueFieldType.setName(valueField);
-
-        MappedFieldType metricFieldType = new NumberFieldMapper.NumberFieldType(NumberFieldMapper.NumberType.LONG);
-        metricFieldType.setName(metricField);
-        metricFieldType.setHasDocValues(true);
-        metricFieldType.setName(metricField);
+        MappedFieldType valueFieldType = new NumberFieldMapper.NumberFieldType(valueField, NumberFieldMapper.NumberType.LONG);
+        MappedFieldType metricFieldType = new NumberFieldMapper.NumberFieldType(metricField, NumberFieldMapper.NumberType.LONG);
 
         // Setup the composite agg
         TermsGroupConfig termsGroupConfig = new TermsGroupConfig(valueField);
@@ -496,12 +470,12 @@ public class IndexerUtilsTests extends AggregatorTestCase {
         aggregator.preCollection();
         indexSearcher.search(new MatchAllDocsQuery(), aggregator);
         aggregator.postCollection();
-        CompositeAggregation composite = (CompositeAggregation) aggregator.buildAggregation(0L);
+        CompositeAggregation composite = (CompositeAggregation) aggregator.buildTopLevel();
         indexReader.close();
         directory.close();
 
         final GroupConfig groupConfig = randomGroupConfig(random());
-        List<IndexRequest> docs = IndexerUtils.processBuckets(composite, indexName, stats, groupConfig, "foo");
+        List<IndexRequest> docs = IndexerUtils.processBuckets(composite, indexName, stats, groupConfig, "foo").collect(Collectors.toList());
 
         assertThat(docs.size(), equalTo(6));
         for (IndexRequest doc : docs) {
@@ -546,22 +520,16 @@ public class IndexerUtilsTests extends AggregatorTestCase {
         IndexReader indexReader = DirectoryReader.open(directory);
         IndexSearcher indexSearcher = newIndexSearcher(indexReader);
 
-        DateFieldMapper.Builder builder = new DateFieldMapper.Builder(timestampField);
-        DateFieldMapper.DateFieldType timestampFieldType = builder.fieldType();
-        timestampFieldType.setHasDocValues(true);
-        timestampFieldType.setName(timestampField);
-
-        MappedFieldType valueFieldType = new NumberFieldMapper.NumberFieldType(NumberFieldMapper.NumberType.LONG);
-        valueFieldType.setName(valueField);
-        valueFieldType.setHasDocValues(true);
-        valueFieldType.setName(valueField);
+        DateFieldMapper.DateFieldType timestampFieldType = new DateFieldMapper.DateFieldType(timestampField);
+        MappedFieldType valueFieldType = new NumberFieldMapper.NumberFieldType(valueField, NumberFieldMapper.NumberType.LONG);
 
         // Setup the composite agg
         DateHistogramValuesSourceBuilder dateHisto
             = new DateHistogramValuesSourceBuilder("the_histo." + DateHistogramAggregationBuilder.NAME)
             .field(timestampField)
             .calendarInterval(new DateHistogramInterval("1d"))
-            .timeZone(ZoneId.of("-01:00", ZoneId.SHORT_IDS));  // adds a timezone so that we aren't on default UTC
+            // adds a timezone so that we aren't on default UTC
+            .timeZone(ZoneId.of("-01:00", ZoneId.SHORT_IDS));
 
         CompositeAggregationBuilder compositeBuilder = new CompositeAggregationBuilder(RollupIndexer.AGGREGATION_NAME,
             singletonList(dateHisto));
@@ -574,28 +542,28 @@ public class IndexerUtilsTests extends AggregatorTestCase {
         aggregator.preCollection();
         indexSearcher.search(new MatchAllDocsQuery(), aggregator);
         aggregator.postCollection();
-        CompositeAggregation composite = (CompositeAggregation) aggregator.buildAggregation(0L);
+        CompositeAggregation composite = (CompositeAggregation) aggregator.buildTopLevel();
         indexReader.close();
         directory.close();
 
         final GroupConfig groupConfig = randomGroupConfig(random());
-        List<IndexRequest> docs = IndexerUtils.processBuckets(composite, indexName, stats, groupConfig, "foo");
+        List<IndexRequest> docs = IndexerUtils.processBuckets(composite, indexName, stats, groupConfig, "foo").collect(Collectors.toList());
 
         assertThat(docs.size(), equalTo(2));
 
         Map<String, Object> map = docs.get(0).sourceAsMap();
         assertNotNull(map.get(valueField + "." + MaxAggregationBuilder.NAME + "." + RollupField.VALUE));
         assertThat(map.get("the_histo." + DateHistogramAggregationBuilder.NAME + "." + RollupField.COUNT_FIELD), equalTo(1));
+        // 2015-09-30T00:00:00.000-01:00
         assertThat(map.get("the_histo." + DateHistogramAggregationBuilder.NAME + "." + RollupField.TIMESTAMP),
-            equalTo(1443574800000L)); // 2015-09-30T00:00:00.000-01:00
+            equalTo(1443574800000L));
 
         map = docs.get(1).sourceAsMap();
         assertNotNull(map.get(valueField + "." + MaxAggregationBuilder.NAME + "." + RollupField.VALUE));
         assertThat(map.get("the_histo." + DateHistogramAggregationBuilder.NAME + "." + RollupField.COUNT_FIELD), equalTo(1));
+        // 2015-10-01T00:00:00.000-01:00
         assertThat(map.get("the_histo." + DateHistogramAggregationBuilder.NAME + "." + RollupField.TIMESTAMP),
-            equalTo(1443661200000L)); // 2015-10-01T00:00:00.000-01:00
-
-
+            equalTo(1443661200000L));
     }
 
     interface Mock {

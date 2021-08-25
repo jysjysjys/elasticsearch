@@ -1,20 +1,9 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.cluster.routing.allocation;
@@ -566,19 +555,13 @@ public class ClusterRebalanceRoutingTests extends ESAllocationTestCase {
 
         AllocationService strategy = createAllocationService(Settings.EMPTY, new TestGatewayAllocator() {
             @Override
-            public void allocateUnassigned(RoutingAllocation allocation) {
-                if (allocateTest1.get() == false) {
-                    RoutingNodes.UnassignedShards unassigned = allocation.routingNodes().unassigned();
-                    RoutingNodes.UnassignedShards.UnassignedIterator iterator = unassigned.iterator();
-                    while (iterator.hasNext()) {
-                        ShardRouting next = iterator.next();
-                        if ("test1".equals(next.index().getName())) {
-                            iterator.removeAndIgnore(UnassignedInfo.AllocationStatus.NO_ATTEMPT, allocation.changes());
-                        }
-
-                    }
+            public void allocateUnassigned(ShardRouting shardRouting, RoutingAllocation allocation,
+                                           UnassignedAllocationHandler unassignedAllocationHandler) {
+                if (allocateTest1.get() == false && "test1".equals(shardRouting.index().getName())) {
+                    unassignedAllocationHandler.removeAndIgnore(UnassignedInfo.AllocationStatus.NO_ATTEMPT, allocation.changes());
+                } else {
+                    super.allocateUnassigned(shardRouting, allocation, unassignedAllocationHandler);
                 }
-                super.allocateUnassigned(allocation);
             }
         });
 
@@ -667,11 +650,10 @@ public class ClusterRebalanceRoutingTests extends ESAllocationTestCase {
             .put(ClusterRebalanceAllocationDecider.CLUSTER_ROUTING_ALLOCATION_ALLOW_REBALANCE_SETTING.getKey(),
                 ClusterRebalanceAllocationDecider.ClusterRebalanceType.ALWAYS.toString()).build(), new TestGatewayAllocator() {
             @Override
-            public void allocateUnassigned(RoutingAllocation allocation) {
+            public void beforeAllocation(RoutingAllocation allocation) {
                 if (hasFetches.get()) {
                     allocation.setHasPendingAsyncFetch();
                 }
-                super.allocateUnassigned(allocation);
             }
         });
 

@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.rollup;
 
@@ -13,7 +14,6 @@ import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.search.aggregations.AggregationBuilder;
 import org.elasticsearch.search.aggregations.bucket.histogram.DateHistogramAggregationBuilder;
-import org.elasticsearch.search.aggregations.bucket.histogram.DateHistogramInterval;
 import org.elasticsearch.search.aggregations.bucket.histogram.HistogramAggregationBuilder;
 import org.elasticsearch.search.aggregations.bucket.terms.TermsAggregationBuilder;
 import org.elasticsearch.search.aggregations.metrics.AvgAggregationBuilder;
@@ -204,12 +204,6 @@ public class RollupRequestTranslator {
                 rolledDateHisto.calendarInterval(source.getCalendarInterval());
             } else if (source.getFixedInterval() != null) {
                 rolledDateHisto.fixedInterval(source.getFixedInterval());
-            } else if (source.dateHistogramInterval() != null) {
-                // We have to fall back to deprecated interval because we're not sure if this is fixed or cal
-                rolledDateHisto.dateHistogramInterval(source.dateHistogramInterval());
-            } else {
-                // if interval() was used we know it is fixed and can upgrade
-                rolledDateHisto.fixedInterval(new DateHistogramInterval(source.interval() + "ms"));
             }
 
             ZoneId timeZone = source.timeZone() == null ? DateHistogramGroupConfig.DEFAULT_ZONEID_TIMEZONE : source.timeZone();
@@ -357,8 +351,8 @@ public class RollupRequestTranslator {
      * @param <T> The type of ValueSourceAggBuilder that we are working with
      * @return the translated multi-bucket ValueSourceAggBuilder
      */
-    private static <T extends ValuesSourceAggregationBuilder> List<AggregationBuilder>
-        translateVSAggBuilder(ValuesSourceAggregationBuilder source, NamedWriteableRegistry registry, Supplier<T> factory) {
+    private static <T extends ValuesSourceAggregationBuilder<T>> List<AggregationBuilder>
+        translateVSAggBuilder(T source, NamedWriteableRegistry registry, Supplier<T> factory) {
 
         T rolled = factory.get();
 
@@ -449,7 +443,7 @@ public class RollupRequestTranslator {
      *                 most of the leafs to easily clone them
      * @return The translated leaf aggregation
      */
-    private static List<AggregationBuilder> translateVSLeaf(ValuesSourceAggregationBuilder.LeafOnly metric,
+    private static List<AggregationBuilder> translateVSLeaf(ValuesSourceAggregationBuilder.LeafOnly<?,?> metric,
                                                             NamedWriteableRegistry registry) {
 
         List<AggregationBuilder> rolledMetrics;
@@ -483,7 +477,7 @@ public class RollupRequestTranslator {
                      NamedWriteableAwareStreamInput in =
                              new NamedWriteableAwareStreamInput(stream, registry)) {
 
-                    ValuesSourceAggregationBuilder serialized
+                    ValuesSourceAggregationBuilder<?> serialized
                             = ((ValuesSourceAggregationBuilder)in.readNamedWriteable(AggregationBuilder.class))
                             .field(RollupField.formatFieldName(metric, RollupField.VALUE));
 

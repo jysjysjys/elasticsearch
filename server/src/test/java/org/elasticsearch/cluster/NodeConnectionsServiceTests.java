@@ -1,35 +1,23 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.cluster;
 
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
+import org.elasticsearch.Build;
 import org.elasticsearch.ElasticsearchTimeoutException;
 import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.PlainActionFuture;
-import org.elasticsearch.cluster.coordination.DeterministicTaskQueue;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodeRole;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
-import org.elasticsearch.common.CheckedRunnable;
 import org.elasticsearch.common.UUIDs;
 import org.elasticsearch.common.component.Lifecycle;
 import org.elasticsearch.common.component.LifecycleListener;
@@ -37,6 +25,9 @@ import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.BoundTransportAddress;
 import org.elasticsearch.common.transport.TransportAddress;
+import org.elasticsearch.common.util.concurrent.DeterministicTaskQueue;
+import org.elasticsearch.core.CheckedRunnable;
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.test.MockLogAppender;
 import org.elasticsearch.test.junit.annotations.TestLogging;
@@ -44,7 +35,6 @@ import org.elasticsearch.threadpool.TestThreadPool;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.ConnectTransportException;
 import org.elasticsearch.transport.ConnectionProfile;
-import org.elasticsearch.transport.RequestHandlerRegistry;
 import org.elasticsearch.transport.Transport;
 import org.elasticsearch.transport.TransportException;
 import org.elasticsearch.transport.TransportMessageListener;
@@ -68,10 +58,8 @@ import java.util.function.Predicate;
 
 import static java.util.Collections.emptySet;
 import static org.elasticsearch.cluster.NodeConnectionsService.CLUSTER_NODE_RECONNECT_INTERVAL_SETTING;
-import static org.elasticsearch.common.settings.Settings.builder;
-import static org.elasticsearch.common.unit.TimeValue.timeValueMillis;
 import static org.elasticsearch.common.util.concurrent.ConcurrentCollections.newConcurrentMap;
-import static org.elasticsearch.node.Node.NODE_NAME_SETTING;
+import static org.elasticsearch.core.TimeValue.timeValueMillis;
 import static org.hamcrest.Matchers.equalTo;
 
 public class NodeConnectionsServiceTests extends ESTestCase {
@@ -83,7 +71,7 @@ public class NodeConnectionsServiceTests extends ESTestCase {
     private List<DiscoveryNode> generateNodes() {
         List<DiscoveryNode> nodes = new ArrayList<>();
         for (int i = randomIntBetween(20, 50); i > 0; i--) {
-            Set<DiscoveryNodeRole> roles = new HashSet<>(randomSubsetOf(DiscoveryNodeRole.BUILT_IN_ROLES));
+            Set<DiscoveryNodeRole> roles = new HashSet<>(randomSubsetOf(DiscoveryNodeRole.roles()));
             nodes.add(new DiscoveryNode("node_" + i, "" + i, buildNewFakeTransportAddress(), Collections.emptyMap(),
                 roles, Version.CURRENT));
         }
@@ -170,8 +158,7 @@ public class NodeConnectionsServiceTests extends ESTestCase {
             settings.put(CLUSTER_NODE_RECONNECT_INTERVAL_SETTING.getKey(), reconnectIntervalMillis + "ms");
         }
 
-        final DeterministicTaskQueue deterministicTaskQueue
-            = new DeterministicTaskQueue(builder().put(NODE_NAME_SETTING.getKey(), "node").build(), random());
+        final DeterministicTaskQueue deterministicTaskQueue = new DeterministicTaskQueue();
 
         MockTransport transport = new MockTransport(deterministicTaskQueue.getThreadPool());
         TestTransportService transportService = new TestTransportService(transport, deterministicTaskQueue.getThreadPool());
@@ -307,8 +294,7 @@ public class NodeConnectionsServiceTests extends ESTestCase {
 
     @TestLogging(reason="testing that DEBUG-level logging is reasonable", value="org.elasticsearch.cluster.NodeConnectionsService:DEBUG")
     public void testDebugLogging() throws IllegalAccessException {
-        final DeterministicTaskQueue deterministicTaskQueue
-            = new DeterministicTaskQueue(builder().put(NODE_NAME_SETTING.getKey(), "node").build(), random());
+        final DeterministicTaskQueue deterministicTaskQueue = new DeterministicTaskQueue();
 
         MockTransport transport = new MockTransport(deterministicTaskQueue.getThreadPool());
         TestTransportService transportService = new TestTransportService(transport, deterministicTaskQueue.getThreadPool());
@@ -477,9 +463,9 @@ public class NodeConnectionsServiceTests extends ESTestCase {
         }
 
         @Override
-        public void handshake(Transport.Connection connection, long timeout, Predicate<ClusterName> clusterNamePredicate,
+        public void handshake(Transport.Connection connection, TimeValue timeout, Predicate<ClusterName> clusterNamePredicate,
                               ActionListener<HandshakeResponse> listener) {
-            listener.onResponse(new HandshakeResponse(connection.getNode(), new ClusterName(""), Version.CURRENT));
+            listener.onResponse(new HandshakeResponse(Version.CURRENT, Build.CURRENT.hash(), connection.getNode(), new ClusterName("")));
         }
 
         @Override
@@ -500,8 +486,9 @@ public class NodeConnectionsServiceTests extends ESTestCase {
         }
     }
 
-    private final class MockTransport implements Transport {
-        private ResponseHandlers responseHandlers = new ResponseHandlers();
+    private static final class MockTransport implements Transport {
+        private final ResponseHandlers responseHandlers = new ResponseHandlers();
+        private final RequestHandlers requestHandlers = new RequestHandlers();
         private volatile boolean randomConnectionExceptions = false;
         private final ThreadPool threadPool;
 
@@ -510,21 +497,7 @@ public class NodeConnectionsServiceTests extends ESTestCase {
         }
 
         @Override
-        public <Request extends TransportRequest> void registerRequestHandler(RequestHandlerRegistry<Request> reg) {
-        }
-
-        @SuppressWarnings("unchecked")
-        @Override
-        public RequestHandlerRegistry getRequestHandler(String action) {
-            return null;
-        }
-
-        @Override
         public void setMessageListener(TransportMessageListener listener) {
-        }
-
-        @Override
-        public void setLocalNode(DiscoveryNode localNode) {
         }
 
         @Override
@@ -612,6 +585,11 @@ public class NodeConnectionsServiceTests extends ESTestCase {
         @Override
         public ResponseHandlers getResponseHandlers() {
             return responseHandlers;
+        }
+
+        @Override
+        public RequestHandlers getRequestHandlers() {
+            return requestHandlers;
         }
     }
 }

@@ -1,26 +1,17 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *         http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.cluster.coordination;
 
 import org.elasticsearch.cluster.ClusterModule;
+import org.elasticsearch.cluster.metadata.DataStream;
 import org.elasticsearch.cluster.metadata.IndexGraveyard;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.common.UUIDs;
 import org.elasticsearch.common.bytes.BytesReference;
@@ -34,10 +25,13 @@ import org.elasticsearch.test.ESTestCase;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import static org.elasticsearch.cluster.metadata.DataStreamTestHelper.createFirstBackingIndex;
+import static org.elasticsearch.cluster.metadata.DataStreamTestHelper.createTimestampField;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.not;
@@ -74,6 +68,7 @@ public class ElasticsearchNodeCommandTests extends ESTestCase {
         }
         assertThat(loadedMetadata.clusterUUID(), not(equalTo("_na_")));
         assertThat(loadedMetadata.clusterUUID(), equalTo(latestMetadata.clusterUUID()));
+        assertThat(loadedMetadata.dataStreams(), equalTo(latestMetadata.dataStreams()));
 
         // make sure the index tombstones are the same too
         if (hasMissingCustoms) {
@@ -100,14 +95,25 @@ public class ElasticsearchNodeCommandTests extends ESTestCase {
         for (int i = 0; i < numDelIndices; i++) {
             graveyard.addTombstone(new Index(randomAlphaOfLength(10) + "del-idx-" + i, UUIDs.randomBase64UUID()));
         }
+        if (randomBoolean()) {
+            int numDataStreams = randomIntBetween(0, 5);
+            for (int i = 0; i < numDataStreams; i++) {
+                String dataStreamName = "name" + 1;
+                IndexMetadata backingIndex = createFirstBackingIndex(dataStreamName).build();
+                mdBuilder.put(new DataStream(dataStreamName, createTimestampField("@timestamp"),
+                    List.of(backingIndex.getIndex())));
+            }
+        }
         mdBuilder.indexGraveyard(graveyard.build());
         return mdBuilder.build();
     }
 
     @Override
     protected NamedXContentRegistry xContentRegistry() {
-        return new NamedXContentRegistry(Stream.of(ClusterModule.getNamedXWriteables().stream(), IndicesModule.getNamedXContents().stream())
+        return new NamedXContentRegistry(
+            Stream.of(ClusterModule.getNamedXWriteables().stream(), IndicesModule.getNamedXContents().stream())
             .flatMap(Function.identity())
-            .collect(Collectors.toList()));
+            .collect(Collectors.toList())
+        );
     }
 }

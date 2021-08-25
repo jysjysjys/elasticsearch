@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.rollup.action;
 
@@ -53,7 +54,7 @@ import static org.mockito.Mockito.when;
 
 public class PutJobStateMachineTests extends ESTestCase {
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({ "unchecked", "rawtypes" })
     public void testCreateIndexException() {
         RollupJob job = new RollupJob(ConfigTestHelpers.randomRollupJobConfig(random(), "foo"), Collections.emptyMap());
 
@@ -79,7 +80,7 @@ public class PutJobStateMachineTests extends ESTestCase {
         verify(client).execute(eq(CreateIndexAction.INSTANCE), any(CreateIndexRequest.class), any());
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({ "unchecked", "rawtypes" })
     public void testIndexAlreadyExists() {
         RollupJob job = new RollupJob(ConfigTestHelpers.randomRollupJobConfig(random()), Collections.emptyMap());
 
@@ -111,7 +112,7 @@ public class PutJobStateMachineTests extends ESTestCase {
         verify(client).execute(eq(GetMappingsAction.INSTANCE), any(GetMappingsRequest.class), any());
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({ "unchecked", "rawtypes" })
     public void testIndexMetadata() throws InterruptedException {
         RollupJob job = new RollupJob(ConfigTestHelpers.randomRollupJobConfig(random()), Collections.emptyMap());
 
@@ -154,7 +155,7 @@ public class PutJobStateMachineTests extends ESTestCase {
         latch.await(4, TimeUnit.SECONDS);
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({ "unchecked", "rawtypes" })
     public void testGetMappingFails() {
         RollupJob job = new RollupJob(ConfigTestHelpers.randomRollupJobConfig(random(), "foo"), Collections.emptyMap());
 
@@ -178,7 +179,7 @@ public class PutJobStateMachineTests extends ESTestCase {
         verify(client).execute(eq(GetMappingsAction.INSTANCE), any(GetMappingsRequest.class), any());
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({ "unchecked", "rawtypes" })
     public void testNoMetadataInMapping() {
         RollupJob job = new RollupJob(ConfigTestHelpers.randomRollupJobConfig(random()), Collections.emptyMap());
 
@@ -210,7 +211,7 @@ public class PutJobStateMachineTests extends ESTestCase {
         verify(client).execute(eq(GetMappingsAction.INSTANCE), any(GetMappingsRequest.class), any());
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({ "unchecked", "rawtypes" })
     public void testMetadataButNotRollup() {
         RollupJob job = new RollupJob(ConfigTestHelpers.randomRollupJobConfig(random()), Collections.emptyMap());
 
@@ -246,7 +247,7 @@ public class PutJobStateMachineTests extends ESTestCase {
         verify(client).execute(eq(GetMappingsAction.INSTANCE), any(GetMappingsRequest.class), any());
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({ "unchecked", "rawtypes" })
     public void testNoMappingVersion() {
         RollupJob job = new RollupJob(ConfigTestHelpers.randomRollupJobConfig(random()), Collections.emptyMap());
 
@@ -281,7 +282,7 @@ public class PutJobStateMachineTests extends ESTestCase {
         verify(client).execute(eq(GetMappingsAction.INSTANCE), any(GetMappingsRequest.class), any());
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({ "unchecked", "rawtypes" })
     public void testJobAlreadyInMapping() {
         RollupJob job = new RollupJob(ConfigTestHelpers.randomRollupJobConfig(random(), "foo"), Collections.emptyMap());
 
@@ -316,7 +317,7 @@ public class PutJobStateMachineTests extends ESTestCase {
         verify(client).execute(eq(GetMappingsAction.INSTANCE), any(GetMappingsRequest.class), any());
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({ "unchecked", "rawtypes" })
     public void testAddJobToMapping() {
         final RollupJobConfig unrelatedJob =
             ConfigTestHelpers.randomRollupJobConfig(random(), ESTestCase.randomAlphaOfLength(10), "foo", "rollup_index_foo");
@@ -363,7 +364,7 @@ public class PutJobStateMachineTests extends ESTestCase {
         verify(client).execute(eq(PutMappingAction.INSTANCE), any(PutMappingRequest.class), any());
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({ "unchecked", "rawtypes" })
     public void testTaskAlreadyExists() {
         RollupJob job = new RollupJob(ConfigTestHelpers.randomRollupJobConfig(random(), "foo"), Collections.emptyMap());
 
@@ -386,7 +387,7 @@ public class PutJobStateMachineTests extends ESTestCase {
         verify(tasksService).sendStartRequest(eq(job.getConfig().getId()), eq(RollupField.TASK_NAME), eq(job), any());
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({ "unchecked", "rawtypes" })
     public void testStartTask() {
         RollupJob job = new RollupJob(ConfigTestHelpers.randomRollupJobConfig(random()), Collections.emptyMap());
 
@@ -421,7 +422,9 @@ public class PutJobStateMachineTests extends ESTestCase {
     }
 
     public void testDeprecatedTimeZone() {
-        GroupConfig groupConfig = new GroupConfig(new DateHistogramGroupConfig("foo", new DateHistogramInterval("1h"), null, "Japan"));
+        GroupConfig groupConfig = new GroupConfig(
+            new DateHistogramGroupConfig.FixedInterval("foo", new DateHistogramInterval("1h"), null, "Japan")
+        );
         RollupJobConfig config = new RollupJobConfig("foo", randomAlphaOfLength(5), "rollup", ConfigTestHelpers.randomCron(),
             100, groupConfig, Collections.emptyList(), null);
         PutRollupJobAction.Request request = new PutRollupJobAction.Request(config);
@@ -431,7 +434,9 @@ public class PutJobStateMachineTests extends ESTestCase {
     }
 
     public void testTimeZone() {
-        GroupConfig groupConfig = new GroupConfig(new DateHistogramGroupConfig("foo", new DateHistogramInterval("1h"), null, "EST"));
+        GroupConfig groupConfig = new GroupConfig(
+            new DateHistogramGroupConfig.FixedInterval("foo", new DateHistogramInterval("1h"), null, "EST")
+        );
         RollupJobConfig config = new RollupJobConfig("foo", randomAlphaOfLength(5), "rollup", ConfigTestHelpers.randomCron(),
             100, groupConfig, Collections.emptyList(), null);
         PutRollupJobAction.Request request = new PutRollupJobAction.Request(config);

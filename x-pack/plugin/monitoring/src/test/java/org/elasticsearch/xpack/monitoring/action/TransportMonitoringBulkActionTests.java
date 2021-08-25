@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.monitoring.action;
 
@@ -209,7 +210,7 @@ public class TransportMonitoringBulkActionTests extends ESTestCase {
                 assertThat(exportedDoc.getCluster(), equalTo(clusterUUID));
             });
 
-            final ActionListener listener = (ActionListener) i.getArguments()[1];
+            final ActionListener<?> listener = (ActionListener) i.getArguments()[1];
             listener.onResponse(null);
             return Void.TYPE;
         }).when(exporters).export(any(Collection.class), any(ActionListener.class));
@@ -348,7 +349,7 @@ public class TransportMonitoringBulkActionTests extends ESTestCase {
             final Collection<MonitoringDoc> exportedDocs = (Collection) i.getArguments()[0];
             assertThat(exportedDocs, is(docs));
 
-            final ActionListener listener = (ActionListener) i.getArguments()[1];
+            final ActionListener<?> listener = (ActionListener) i.getArguments()[1];
             listener.onResponse(null);
             return Void.TYPE;
         }).when(exporters).export(any(Collection.class), any(ActionListener.class));

@@ -1,25 +1,14 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.common.logging;
 
-import org.elasticsearch.common.SuppressForbidden;
+import org.elasticsearch.core.SuppressForbidden;
 import org.elasticsearch.common.xcontent.ObjectParser;
 import org.elasticsearch.test.rest.ESRestTestCase;
 
@@ -30,8 +19,9 @@ import java.nio.file.Paths;
 import java.util.Iterator;
 import java.util.stream.Stream;
 
+import static org.hamcrest.Matchers.emptyOrNullString;
 import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.isEmptyOrNullString;
+import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
 /**
@@ -73,11 +63,11 @@ public abstract class JsonLogsIntegTestCase extends ESRestTestCase {
         try (Stream<JsonLogLine> stream = JsonLogsStream.from(openReader(getLogFile()), getParser() )) {
             stream.limit(LINES_TO_CHECK)
                   .forEach(jsonLogLine -> {
-                      assertThat(jsonLogLine.getType(), not(isEmptyOrNullString()));
-                      assertThat(jsonLogLine.getTimestamp(), not(isEmptyOrNullString()));
-                      assertThat(jsonLogLine.getLevel(), not(isEmptyOrNullString()));
-                      assertThat(jsonLogLine.getComponent(), not(isEmptyOrNullString()));
-                      assertThat(jsonLogLine.getMessage(), not(isEmptyOrNullString()));
+                      assertThat(jsonLogLine.getDataset(), is(not(emptyOrNullString())));
+                      assertThat(jsonLogLine.getTimestamp(), is(not(emptyOrNullString())));
+                      assertThat(jsonLogLine.getLevel(), is(not(emptyOrNullString())));
+                      assertThat(jsonLogLine.getComponent(), is(not(emptyOrNullString())));
+                      assertThat(jsonLogLine.getMessage(), is(not(emptyOrNullString())));
 
                       // all lines should have the same nodeName and clusterName
                       assertThat(jsonLogLine.getNodeName(), nodeNameMatcher());
@@ -87,14 +77,14 @@ public abstract class JsonLogsIntegTestCase extends ESRestTestCase {
     }
 
     private JsonLogLine findFirstLine() throws IOException {
-        try (Stream<JsonLogLine> stream = JsonLogsStream.from(openReader(getLogFile()))) {
+        try (Stream<JsonLogLine> stream = JsonLogsStream.from(openReader(getLogFile()), getParser())) {
             return stream.findFirst()
                          .orElseThrow(() -> new AssertionError("no logs at all?!"));
         }
     }
 
     public void testNodeIdAndClusterIdConsistentOnceAvailable() throws IOException {
-        try (Stream<JsonLogLine> stream = JsonLogsStream.from(openReader(getLogFile()))) {
+        try (Stream<JsonLogLine> stream = JsonLogsStream.from(openReader(getLogFile()), getParser())) {
             Iterator<JsonLogLine> iterator = stream.iterator();
 
             JsonLogLine firstLine = null;

@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 
 package org.elasticsearch.xpack.idp.saml.sp;
@@ -37,7 +38,8 @@ public class WildcardServiceProviderResolverTests extends IdpSamlTestCase {
         + "      \"template\": { "
         + "         \"name\": \"{{service}} at example.com (A)\","
         + "         \"privileges\": {"
-        + "           \"resource\": \"service1:example:{{service}}\""
+        + "           \"resource\": \"service1:example:{{service}}\","
+        + "           \"roles\": [ \"sso:(.*)\" ]"
         + "         },"
         + "         \"attributes\": {"
         + "           \"principal\": \"http://cloud.elastic.co/saml/principal\","
@@ -54,7 +56,8 @@ public class WildcardServiceProviderResolverTests extends IdpSamlTestCase {
         + "      \"template\": { "
         + "         \"name\": \"{{service}} at example.com (B)\","
         + "         \"privileges\": {"
-        + "           \"resource\": \"service1:example:{{service}}\""
+        + "           \"resource\": \"service1:example:{{service}}\","
+        + "           \"roles\": [ \"sso:(.*)\" ]"
         + "         },"
         + "         \"attributes\": {"
         + "           \"principal\": \"http://cloud.elastic.co/saml/principal\","
@@ -71,7 +74,8 @@ public class WildcardServiceProviderResolverTests extends IdpSamlTestCase {
         + "      \"template\": { "
         + "         \"name\": \"{{id}} at example.net\","
         + "         \"privileges\": {"
-        + "           \"resource\": \"service2:example:{{id}}\""
+        + "           \"resource\": \"service2:example:{{id}}\","
+        + "           \"roles\": [ \"sso:(.*)\" ]"
         + "         },"
         + "         \"attributes\": {"
         + "           \"principal\": \"http://cloud.elastic.co/saml/principal\","

@@ -1,27 +1,14 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 
 package org.elasticsearch.search.aggregations.metrics;
 
-import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.search.aggregations.ParsedAggregation;
-import org.elasticsearch.search.aggregations.pipeline.PipelineAggregator;
 import org.elasticsearch.test.InternalAggregationTestCase;
 
 import java.io.IOException;
@@ -32,10 +19,7 @@ import java.util.Map;
 public class InternalMedianAbsoluteDeviationTests extends InternalAggregationTestCase<InternalMedianAbsoluteDeviation> {
 
     @Override
-    protected InternalMedianAbsoluteDeviation createTestInstance(String name,
-                                                                 List<PipelineAggregator> pipelineAggregators,
-                                                                 Map<String, Object> metadata) {
-
+    protected InternalMedianAbsoluteDeviation createTestInstance(String name, Map<String, Object> metadata) {
         final TDigestState valuesSketch = new TDigestState(randomDoubleBetween(20, 1000, true));
         final int numberOfValues = frequently()
             ? randomIntBetween(0, 1000)
@@ -44,7 +28,7 @@ public class InternalMedianAbsoluteDeviationTests extends InternalAggregationTes
             valuesSketch.add(randomDouble());
         }
 
-        return new InternalMedianAbsoluteDeviation(name, pipelineAggregators, metadata, randomNumericDocValueFormat(), valuesSketch);
+        return new InternalMedianAbsoluteDeviation(name, metadata, randomNumericDocValueFormat(), valuesSketch);
     }
 
     @Override
@@ -70,11 +54,6 @@ public class InternalMedianAbsoluteDeviationTests extends InternalAggregationTes
         ParsedMedianAbsoluteDeviation parsedMAD = (ParsedMedianAbsoluteDeviation) parsedAggregation;
         // Double.compare handles NaN, which we use for no result
         assertEquals(internalMAD.getMedianAbsoluteDeviation(), parsedMAD.getMedianAbsoluteDeviation(), 0);
-    }
-
-    @Override
-    protected Writeable.Reader<InternalMedianAbsoluteDeviation> instanceReader() {
-        return InternalMedianAbsoluteDeviation::new;
     }
 
     @Override
@@ -105,6 +84,6 @@ public class InternalMedianAbsoluteDeviationTests extends InternalAggregationTes
                 break;
         }
 
-        return new InternalMedianAbsoluteDeviation(name, instance.pipelineAggregators(), metadata, instance.format, valuesSketch);
+        return new InternalMedianAbsoluteDeviation(name, metadata, instance.format, valuesSketch);
     }
 }

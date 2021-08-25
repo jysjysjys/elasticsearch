@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 
 package org.elasticsearch.xpack.transform.transforms;
@@ -10,10 +11,11 @@ import org.elasticsearch.ElasticsearchStatusException;
 import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.client.ParentTaskAssigningClient;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.persistent.PersistentTasksService;
 import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.tasks.TaskId;
@@ -28,6 +30,7 @@ import org.elasticsearch.xpack.core.transform.transforms.TransformConfigTests;
 import org.elasticsearch.xpack.core.transform.transforms.TransformState;
 import org.elasticsearch.xpack.core.transform.transforms.TransformTaskParams;
 import org.elasticsearch.xpack.core.transform.transforms.TransformTaskState;
+import org.elasticsearch.xpack.transform.TransformServices;
 import org.elasticsearch.xpack.transform.checkpoint.TransformCheckpointService;
 import org.elasticsearch.xpack.transform.notifications.MockTransformAuditor;
 import org.elasticsearch.xpack.transform.notifications.TransformAuditor;
@@ -36,6 +39,7 @@ import org.elasticsearch.xpack.transform.persistence.TransformConfigManager;
 import org.junit.After;
 import org.junit.Before;
 
+import java.time.Clock;
 import java.util.Collections;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -70,14 +74,20 @@ public class TransformTaskTests extends ESTestCase {
         when(threadPool.executor("generic")).thenReturn(mock(ExecutorService.class));
 
         TransformConfig transformConfig = TransformConfigTests.randomTransformConfigWithoutHeaders();
-        TransformAuditor auditor = new MockTransformAuditor();
+        TransformAuditor auditor = MockTransformAuditor.createMockAuditor();
         TransformConfigManager transformsConfigManager = new InMemoryTransformConfigManager();
         TransformCheckpointService transformsCheckpointService = new TransformCheckpointService(
-            client,
+            Clock.systemUTC(),
             Settings.EMPTY,
             new ClusterService(Settings.EMPTY, new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS), null),
             transformsConfigManager,
             auditor
+        );
+        TransformServices transformServices = new TransformServices(
+            transformsConfigManager,
+            transformsCheckpointService,
+            auditor,
+            mock(SchedulerEngine.class)
         );
 
         TransformState transformState = new TransformState(
@@ -96,6 +106,7 @@ public class TransformTaskTests extends ESTestCase {
             "some_type",
             "some_action",
             TaskId.EMPTY_TASK_ID,
+            client,
             new TransformTaskParams(transformConfig.getId(), Version.CURRENT, TimeValue.timeValueSeconds(10), false),
             transformState,
             mock(SchedulerEngine.class),
@@ -109,12 +120,9 @@ public class TransformTaskTests extends ESTestCase {
         transformTask.init(mock(PersistentTasksService.class), taskManager, "task-id", 42);
 
         ClientTransformIndexerBuilder indexerBuilder = new ClientTransformIndexerBuilder();
-        indexerBuilder.setClient(client)
+        indexerBuilder.setClient(new ParentTaskAssigningClient(client, TaskId.EMPTY_TASK_ID))
             .setTransformConfig(transformConfig)
-            .setAuditor(auditor)
-            .setTransformsConfigManager(transformsConfigManager)
-            .setTransformsCheckpointService(transformsCheckpointService)
-            .setFieldMappings(Collections.emptyMap());
+            .setTransformServices(transformServices);
 
         transformTask.initializeIndexer(indexerBuilder);
         TransformState state = transformTask.getState();
@@ -158,7 +166,7 @@ public class TransformTaskTests extends ESTestCase {
         when(threadPool.executor("generic")).thenReturn(mock(ExecutorService.class));
 
         TransformConfig transformConfig = TransformConfigTests.randomTransformConfigWithoutHeaders();
-        TransformAuditor auditor = new MockTransformAuditor();
+        TransformAuditor auditor = MockTransformAuditor.createMockAuditor();
 
         TransformState transformState = new TransformState(
             TransformTaskState.FAILED,
@@ -176,6 +184,7 @@ public class TransformTaskTests extends ESTestCase {
             "some_type",
             "some_action",
             TaskId.EMPTY_TASK_ID,
+            client,
             new TransformTaskParams(transformConfig.getId(), Version.CURRENT, TimeValue.timeValueSeconds(10), false),
             transformState,
             mock(SchedulerEngine.class),

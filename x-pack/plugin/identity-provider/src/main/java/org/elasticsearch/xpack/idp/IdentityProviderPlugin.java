@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 
 package org.elasticsearch.xpack.idp;
@@ -26,6 +27,7 @@ import org.elasticsearch.env.NodeEnvironment;
 import org.elasticsearch.license.XPackLicenseState;
 import org.elasticsearch.plugins.ActionPlugin;
 import org.elasticsearch.plugins.Plugin;
+import org.elasticsearch.repositories.RepositoriesService;
 import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestHandler;
 import org.elasticsearch.script.ScriptService;
@@ -44,6 +46,7 @@ import org.elasticsearch.xpack.idp.action.TransportPutSamlServiceProviderAction;
 import org.elasticsearch.xpack.idp.action.TransportSamlInitiateSingleSignOnAction;
 import org.elasticsearch.xpack.idp.action.TransportSamlMetadataAction;
 import org.elasticsearch.xpack.idp.action.TransportSamlValidateAuthnRequestAction;
+import org.elasticsearch.xpack.idp.privileges.ApplicationActionsResolver;
 import org.elasticsearch.xpack.idp.privileges.UserPrivilegeResolver;
 import org.elasticsearch.xpack.idp.saml.idp.SamlIdentityProvider;
 import org.elasticsearch.xpack.idp.saml.idp.SamlIdentityProviderBuilder;
@@ -84,7 +87,8 @@ public class IdentityProviderPlugin extends Plugin implements ActionPlugin {
                                                ResourceWatcherService resourceWatcherService, ScriptService scriptService,
                                                NamedXContentRegistry xContentRegistry, Environment environment,
                                                NodeEnvironment nodeEnvironment, NamedWriteableRegistry namedWriteableRegistry,
-                                               IndexNameExpressionResolver indexNameExpressionResolver) {
+                                               IndexNameExpressionResolver indexNameExpressionResolver,
+                                               Supplier<RepositoriesService> repositoriesServiceSupplier) {
         settings = environment.settings();
         enabled = ENABLED_SETTING.get(settings);
         if (enabled == false) {
@@ -94,10 +98,11 @@ public class IdentityProviderPlugin extends Plugin implements ActionPlugin {
         SamlInit.initialize();
         final SamlServiceProviderIndex index = new SamlServiceProviderIndex(client, clusterService);
         final SecurityContext securityContext = new SecurityContext(settings, threadPool.getThreadContext());
-        final UserPrivilegeResolver userPrivilegeResolver = new UserPrivilegeResolver(client, securityContext);
-
 
         final ServiceProviderDefaults serviceProviderDefaults = ServiceProviderDefaults.forSettings(settings);
+        final ApplicationActionsResolver actionsResolver = new ApplicationActionsResolver(settings, serviceProviderDefaults, client);
+        final UserPrivilegeResolver userPrivilegeResolver = new UserPrivilegeResolver(client, securityContext, actionsResolver);
+
         final SamlServiceProviderFactory serviceProviderFactory = new SamlServiceProviderFactory(serviceProviderDefaults);
         final SamlServiceProviderResolver registeredServiceProviderResolver
             = new SamlServiceProviderResolver(settings, index, serviceProviderFactory);
@@ -157,8 +162,9 @@ public class IdentityProviderPlugin extends Plugin implements ActionPlugin {
         settings.addAll(ServiceProviderCacheSettings.getSettings());
         settings.addAll(ServiceProviderDefaults.getSettings());
         settings.addAll(WildcardServiceProviderResolver.getSettings());
-        settings.addAll(X509KeyPairSettings.withPrefix("xpack.idp.signing.", false).getAllSettings());
-        settings.addAll(X509KeyPairSettings.withPrefix("xpack.idp.metadata_signing.", false).getAllSettings());
+        settings.addAll(ApplicationActionsResolver.getSettings());
+        settings.addAll(X509KeyPairSettings.withPrefix("xpack.idp.signing.", false).getEnabledSettings());
+        settings.addAll(X509KeyPairSettings.withPrefix("xpack.idp.metadata_signing.", false).getEnabledSettings());
         return Collections.unmodifiableList(settings);
     }
 

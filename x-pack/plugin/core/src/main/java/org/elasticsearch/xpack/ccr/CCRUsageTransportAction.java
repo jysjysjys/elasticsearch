@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.ccr;
 
@@ -68,7 +69,7 @@ public class CCRUsageTransportAction extends XPackUsageFeatureTransportAction {
             lastFollowTimeInMillis = Math.max(0, Instant.now().toEpochMilli() - lastFollowerIndexCreationDate);
         }
 
-        CCRInfoTransportAction.Usage usage = new CCRInfoTransportAction.Usage(licenseState.isCcrAllowed(),
+        CCRInfoTransportAction.Usage usage = new CCRInfoTransportAction.Usage(licenseState.isAllowed(XPackLicenseState.Feature.CCR),
             XPackSettings.CCR_ENABLED_SETTING.get(settings), numberOfFollowerIndices, numberOfAutoFollowPatterns, lastFollowTimeInMillis);
         listener.onResponse(new XPackUsageFeatureResponse(usage));
     }

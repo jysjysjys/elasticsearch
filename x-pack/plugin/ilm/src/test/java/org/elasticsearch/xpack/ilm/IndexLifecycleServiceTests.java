@@ -1,7 +1,8 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License;
- * you may not use this file except in compliance with the Elastic License.
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0; you may not use this file except in compliance with the Elastic License
+ * 2.0.
  */
 package org.elasticsearch.xpack.ilm;
 
@@ -13,21 +14,28 @@ import org.elasticsearch.client.IndicesAdminClient;
 import org.elasticsearch.cluster.ClusterChangedEvent;
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.block.ClusterBlocks;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.metadata.Metadata;
+import org.elasticsearch.cluster.metadata.NodesShutdownMetadata;
+import org.elasticsearch.cluster.metadata.SingleNodeShutdownMetadata;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.service.ClusterService;
+import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.component.Lifecycle.State;
 import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.TransportAddress;
-import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.test.ESTestCase;
+import org.elasticsearch.test.NodeRoles;
 import org.elasticsearch.threadpool.TestThreadPool;
 import org.elasticsearch.threadpool.ThreadPool;
+import org.elasticsearch.xpack.core.ilm.CheckShrinkReadyStep;
+import org.elasticsearch.xpack.core.ilm.GenerateUniqueIndexNameStep;
 import org.elasticsearch.xpack.core.ilm.IndexLifecycleMetadata;
 import org.elasticsearch.xpack.core.ilm.LifecycleExecutionState;
 import org.elasticsearch.xpack.core.ilm.LifecyclePolicy;
@@ -36,12 +44,16 @@ import org.elasticsearch.xpack.core.ilm.LifecycleSettings;
 import org.elasticsearch.xpack.core.ilm.MockAction;
 import org.elasticsearch.xpack.core.ilm.OperationMode;
 import org.elasticsearch.xpack.core.ilm.Phase;
+import org.elasticsearch.xpack.core.ilm.SetSingleNodeAllocateStep;
 import org.elasticsearch.xpack.core.ilm.ShrinkAction;
 import org.elasticsearch.xpack.core.ilm.ShrinkStep;
+import org.elasticsearch.xpack.core.ilm.ShrunkShardsAllocatedStep;
 import org.elasticsearch.xpack.core.ilm.Step;
 import org.elasticsearch.xpack.core.scheduler.SchedulerEngine;
+import org.hamcrest.Description;
 import org.junit.After;
 import org.junit.Before;
+import org.mockito.ArgumentMatcher;
 import org.mockito.Mockito;
 
 import java.time.Clock;
@@ -55,16 +67,19 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 
-import static org.elasticsearch.node.Node.NODE_MASTER_SETTING;
+import static java.time.Clock.systemUTC;
+import static org.elasticsearch.gateway.GatewayService.STATE_NOT_RECOVERED_BLOCK;
 import static org.elasticsearch.xpack.core.ilm.AbstractStepTestCase.randomStepKey;
 import static org.elasticsearch.xpack.core.ilm.LifecycleExecutionState.ILM_CUSTOM_METADATA_KEY;
-import static org.elasticsearch.xpack.core.ilm.LifecyclePolicyTestsUtils.newTestLifecyclePolicy;
+import static org.elasticsearch.xpack.ilm.LifecyclePolicyTestsUtils.newTestLifecyclePolicy;
 import static org.hamcrest.Matchers.equalTo;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyString;
+import static org.mockito.Matchers.argThat;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class IndexLifecycleServiceTests extends ESTestCase {
@@ -82,9 +97,10 @@ public class IndexLifecycleServiceTests extends ESTestCase {
         nodeId = randomAlphaOfLength(10);
         ExecutorService executorService = mock(ExecutorService.class);
         clusterService = mock(ClusterService.class);
-        masterNode = DiscoveryNode.createLocal(settings(Version.CURRENT)
-                .put(NODE_MASTER_SETTING.getKey(), true).build(),
-            new TransportAddress(TransportAddress.META_ADDRESS, 9300), nodeId);
+        masterNode = DiscoveryNode.createLocal(
+            NodeRoles.masterNode(settings(Version.CURRENT).build()),
+            new TransportAddress(TransportAddress.META_ADDRESS, 9300),
+            nodeId);
         now = randomNonNegativeLong();
         Clock clock = Clock.fixed(Instant.ofEpochMilli(now), ZoneId.of(randomFrom(ZoneId.getAvailableZoneIds())));
 
@@ -108,7 +124,7 @@ public class IndexLifecycleServiceTests extends ESTestCase {
 
         threadPool = new TestThreadPool("test");
         indexLifecycleService = new IndexLifecycleService(Settings.EMPTY, client, clusterService, threadPool,
-            clock, () -> now, null, null);
+            clock, () -> now, null, null, null);
         Mockito.verify(clusterService).addListener(indexLifecycleService);
         Mockito.verify(clusterService).addStateApplier(indexLifecycleService);
     }
@@ -197,7 +213,7 @@ public class IndexLifecycleServiceTests extends ESTestCase {
 
     public void testRequestedStopInShrinkActionButNotShrinkStep() {
         // test all the shrink action steps that ILM can be stopped during (basically all of them minus the actual shrink)
-        ShrinkAction action = new ShrinkAction(1);
+        ShrinkAction action = new ShrinkAction(1, null);
         action.toSteps(mock(Client.class), "warm", randomStepKey()).stream()
             .map(sk -> sk.getKey().getName())
             .filter(name -> name.equals(ShrinkStep.NAME) == false)
@@ -242,7 +258,8 @@ public class IndexLifecycleServiceTests extends ESTestCase {
         doAnswer(invocationOnMock -> {
             changedOperationMode.set(true);
             return null;
-        }).when(clusterService).submitStateUpdateTask(eq("ilm_operation_mode_update"), any(OperationModeUpdateTask.class));
+        }).when(clusterService).submitStateUpdateTask(eq("ilm_operation_mode_update {OperationMode STOPPED}"),
+            any(OperationModeUpdateTask.class));
         indexLifecycleService.applyClusterState(event);
         indexLifecycleService.triggerPolicies(currentState, true);
         assertTrue(changedOperationMode.get());
@@ -294,7 +311,8 @@ public class IndexLifecycleServiceTests extends ESTestCase {
             assertThat(task.getILMOperationMode(), equalTo(OperationMode.STOPPED));
             moveToMaintenance.set(true);
             return null;
-        }).when(clusterService).submitStateUpdateTask(eq("ilm_operation_mode_update"), any(OperationModeUpdateTask.class));
+        }).when(clusterService).submitStateUpdateTask(eq("ilm_operation_mode_update {OperationMode STOPPED}"),
+            any(OperationModeUpdateTask.class));
 
         indexLifecycleService.applyClusterState(event);
         indexLifecycleService.triggerPolicies(currentState, randomBoolean());
@@ -308,6 +326,40 @@ public class IndexLifecycleServiceTests extends ESTestCase {
 
     public void testExceptionStillProcessesOtherIndicesOnMaster() {
         doTestExceptionStillProcessesOtherIndices(true);
+    }
+
+    public void testOperationModeUpdateTaskPriority() {
+        indexLifecycleService.submitOperationModeUpdate(OperationMode.STOPPING);
+        verifyOperationModeUpdateTaskPriority(OperationMode.STOPPING, Priority.IMMEDIATE);
+        indexLifecycleService.submitOperationModeUpdate(OperationMode.STOPPED);
+        verifyOperationModeUpdateTaskPriority(OperationMode.STOPPED, Priority.IMMEDIATE);
+        indexLifecycleService.submitOperationModeUpdate(OperationMode.RUNNING);
+        verifyOperationModeUpdateTaskPriority(OperationMode.RUNNING, Priority.NORMAL);
+    }
+
+    private void verifyOperationModeUpdateTaskPriority(OperationMode mode, Priority expectedPriority) {
+        verify(clusterService).submitStateUpdateTask(
+            Mockito.eq("ilm_operation_mode_update {OperationMode " + mode.name() +"}"),
+            argThat(new ArgumentMatcher<OperationModeUpdateTask>() {
+
+                Priority actualPriority = null;
+
+                @Override
+                public boolean matches(Object argument) {
+                    if (argument instanceof OperationModeUpdateTask == false) {
+                        return false;
+                    }
+                    actualPriority = ((OperationModeUpdateTask) argument).priority();
+                    return actualPriority == expectedPriority;
+                }
+
+                @Override
+                public void describeTo(Description description) {
+                    description.appendText("the cluster state update task priority must be "+ expectedPriority+" but got: ")
+                        .appendText(actualPriority.name());
+                }
+            })
+        );
     }
 
     @SuppressWarnings("unchecked")
@@ -395,7 +447,7 @@ public class IndexLifecycleServiceTests extends ESTestCase {
 
         if (useOnMaster) {
             when(clusterService.state()).thenReturn(currentState);
-            indexLifecycleService.onMaster();
+            indexLifecycleService.onMaster(currentState);
         } else {
             indexLifecycleService.triggerPolicies(currentState, randomBoolean());
         }
@@ -405,6 +457,27 @@ public class IndexLifecycleServiceTests extends ESTestCase {
             logger.error("failure while waiting for step execution", e);
             fail("both steps should have been executed, even with an exception");
         }
+    }
+
+    public void testClusterChangedWaitsForTheStateToBeRecovered() {
+        IndexLifecycleService ilmService = new IndexLifecycleService(Settings.EMPTY, mock(Client.class), clusterService, threadPool,
+            systemUTC(), () -> now, null, null, null) {
+
+            @Override
+            void onMaster(ClusterState clusterState) {
+                fail("IndexLifecycleService ignored the global [state not recovered / initialized] cluster block");
+            }
+
+            @Override
+            void triggerPolicies(ClusterState clusterState, boolean fromClusterStateChange) {
+                fail("IndexLifecycleService ignored the global [state not recovered / initialized] cluster block");
+            }
+        };
+
+        ClusterState currentState = ClusterState.builder(ClusterName.DEFAULT)
+            .blocks(ClusterBlocks.builder().addGlobalBlock(STATE_NOT_RECOVERED_BLOCK).build())
+            .build();
+        ilmService.clusterChanged(new ClusterChangedEvent("_source", currentState, ClusterState.EMPTY_STATE));
     }
 
     public void testTriggeredDifferentJob() {
@@ -429,5 +502,98 @@ public class IndexLifecycleServiceTests extends ESTestCase {
         } catch (Exception e) {
             fail("Did not expect the before index validation to throw an exception as the parse origination date setting was not set");
         }
+    }
+
+    public void testIndicesOnShuttingDownNodesInDangerousStep() {
+        ClusterState state = ClusterState.builder(ClusterName.DEFAULT).build();
+        assertThat(IndexLifecycleService.indicesOnShuttingDownNodesInDangerousStep(state, "regular_node"),
+            equalTo(Collections.emptySet()));
+        assertThat(IndexLifecycleService.indicesOnShuttingDownNodesInDangerousStep(state, "shutdown_node"),
+            equalTo(Collections.emptySet()));
+
+        IndexMetadata nonDangerousIndex = IndexMetadata.builder("no_danger")
+            .settings(settings(Version.CURRENT).put(LifecycleSettings.LIFECYCLE_NAME_SETTING.getKey(), "mypolicy"))
+            .putCustom(ILM_CUSTOM_METADATA_KEY, LifecycleExecutionState.builder()
+                .setPhase("warm")
+                .setAction("shrink")
+                .setStep(GenerateUniqueIndexNameStep.NAME)
+                .build().asMap())
+            .numberOfShards(randomIntBetween(1, 5)).numberOfReplicas(randomIntBetween(0, 5)).build();
+        IndexMetadata dangerousIndex = IndexMetadata.builder("danger")
+            .settings(settings(Version.CURRENT)
+                .put(LifecycleSettings.LIFECYCLE_NAME_SETTING.getKey(), "mypolicy")
+                .put(IndexMetadata.INDEX_ROUTING_REQUIRE_GROUP_SETTING.getKey() + "_id", "shutdown_node"))
+            .putCustom(ILM_CUSTOM_METADATA_KEY, LifecycleExecutionState.builder()
+                .setPhase("warm")
+                .setAction("shrink")
+                .setStep(randomFrom(SetSingleNodeAllocateStep.NAME, CheckShrinkReadyStep.NAME,
+                    ShrinkStep.NAME, ShrunkShardsAllocatedStep.NAME))
+                .build().asMap())
+            .numberOfShards(randomIntBetween(1, 5)).numberOfReplicas(randomIntBetween(0, 5)).build();
+        ImmutableOpenMap.Builder<String, IndexMetadata> indices = ImmutableOpenMap.<String, IndexMetadata> builder()
+            .fPut("no_danger", nonDangerousIndex)
+            .fPut("danger", dangerousIndex);
+
+        Metadata metadata = Metadata.builder()
+            .putCustom(IndexLifecycleMetadata.TYPE, new IndexLifecycleMetadata(Collections.emptyMap(), OperationMode.RUNNING))
+            .indices(indices.build())
+            .persistentSettings(settings(Version.CURRENT).build())
+            .build();
+
+        state = ClusterState.builder(ClusterName.DEFAULT)
+            .metadata(metadata)
+            .nodes(DiscoveryNodes.builder().localNodeId(nodeId).masterNodeId(nodeId)
+                .add(masterNode)
+                .add(DiscoveryNode.createLocal(
+                    NodeRoles.masterNode(settings(Version.CURRENT).build()),
+                    new TransportAddress(TransportAddress.META_ADDRESS, 9301),
+                    "regular_node"))
+                .add(DiscoveryNode.createLocal(
+                    NodeRoles.masterNode(settings(Version.CURRENT).build()),
+                    new TransportAddress(TransportAddress.META_ADDRESS, 9302),
+                    "shutdown_node"))
+                .build())
+            .build();
+
+        // No danger yet, because no node is shutting down
+        assertThat(IndexLifecycleService.indicesOnShuttingDownNodesInDangerousStep(state, "regular_node"),
+            equalTo(Collections.emptySet()));
+        assertThat(IndexLifecycleService.indicesOnShuttingDownNodesInDangerousStep(state, "shutdown_node"),
+            equalTo(Collections.emptySet()));
+
+        state = ClusterState.builder(state)
+            .metadata(Metadata.builder(state.metadata())
+                .putCustom(NodesShutdownMetadata.TYPE, new NodesShutdownMetadata(Collections.singletonMap("shutdown_node",
+                    SingleNodeShutdownMetadata.builder()
+                        .setNodeId("shutdown_node")
+                        .setReason("shut down for test")
+                        .setStartedAtMillis(randomNonNegativeLong())
+                        .setType(SingleNodeShutdownMetadata.Type.RESTART)
+                        .build())))
+                .build())
+            .build();
+
+        assertThat(IndexLifecycleService.indicesOnShuttingDownNodesInDangerousStep(state, "regular_node"),
+            equalTo(Collections.emptySet()));
+        // No danger, because this is a "RESTART" type shutdown
+        assertThat("restart type shutdowns are not considered dangerous",
+            IndexLifecycleService.indicesOnShuttingDownNodesInDangerousStep(state, "shutdown_node"),
+            equalTo(Collections.emptySet()));
+
+        state = ClusterState.builder(state)
+            .metadata(Metadata.builder(state.metadata())
+                .putCustom(NodesShutdownMetadata.TYPE, new NodesShutdownMetadata(Collections.singletonMap("shutdown_node",
+                    SingleNodeShutdownMetadata.builder()
+                        .setNodeId("shutdown_node")
+                        .setReason("shut down for test")
+                        .setStartedAtMillis(randomNonNegativeLong())
+                        .setType(SingleNodeShutdownMetadata.Type.REMOVE)
+                        .build())))
+                .build())
+            .build();
+
+        // The dangerous index should be calculated as being in danger now
+        assertThat(IndexLifecycleService.indicesOnShuttingDownNodesInDangerousStep(state, "shutdown_node"),
+            equalTo(Collections.singleton("danger")));
     }
 }

@@ -1,28 +1,15 @@
 /*
- * Licensed to Elasticsearch under one or more contributor
- * license agreements. See the NOTICE file distributed with
- * this work for additional information regarding copyright
- * ownership. Elasticsearch licenses this file to you under
- * the Apache License, Version 2.0 (the "License"); you may
- * not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+ * or more contributor license agreements. Licensed under the Elastic License
+ * 2.0 and the Server Side Public License, v 1; you may not use this file except
+ * in compliance with, at your election, the Elastic License 2.0 or the Server
+ * Side Public License, v 1.
  */
 package org.elasticsearch.search.aggregations.metrics;
 
-import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.search.DocValueFormat;
 import org.elasticsearch.search.aggregations.InternalAggregation;
 import org.elasticsearch.search.aggregations.ParsedAggregation;
-import org.elasticsearch.search.aggregations.pipeline.PipelineAggregator;
 import org.elasticsearch.test.InternalAggregationTestCase;
 
 import java.util.ArrayList;
@@ -33,15 +20,10 @@ import java.util.Map;
 public class InternalSumTests extends InternalAggregationTestCase<InternalSum> {
 
     @Override
-    protected InternalSum createTestInstance(String name, List<PipelineAggregator> pipelineAggregators, Map<String, Object> metadata) {
+    protected InternalSum createTestInstance(String name, Map<String, Object> metadata) {
         double value = frequently() ? randomDouble() : randomFrom(Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, Double.NaN);
         DocValueFormat formatter = randomFrom(new DocValueFormat.Decimal("###.##"), DocValueFormat.RAW);
-        return new InternalSum(name, value, formatter, pipelineAggregators, metadata);
-    }
-
-    @Override
-    protected Writeable.Reader<InternalSum> instanceReader() {
-        return InternalSum::new;
+        return new InternalSum(name, value, formatter, metadata);
     }
 
     @Override
@@ -84,9 +66,9 @@ public class InternalSumTests extends InternalAggregationTestCase<InternalSum> {
     private void verifySummationOfDoubles(double[] values, double expected, double delta) {
         List<InternalAggregation> aggregations = new ArrayList<>(values.length);
         for (double value : values) {
-            aggregations.add(new InternalSum("dummy1", value, null, null, null));
+            aggregations.add(new InternalSum("dummy1", value, null, null));
         }
-        InternalSum internalSum = new InternalSum("dummy", 0, null, null, null);
+        InternalSum internalSum = new InternalSum("dummy", 0, null, null);
         InternalSum reduced = internalSum.reduce(aggregations, null);
         assertEquals(expected, reduced.value(), delta);
     }
@@ -103,7 +85,6 @@ public class InternalSumTests extends InternalAggregationTestCase<InternalSum> {
         String name = instance.getName();
         double value = instance.getValue();
         DocValueFormat formatter = instance.format;
-        List<PipelineAggregator> pipelineAggregators = instance.pipelineAggregators();
         Map<String, Object> metadata = instance.getMetadata();
         switch (between(0, 2)) {
         case 0:
@@ -127,6 +108,6 @@ public class InternalSumTests extends InternalAggregationTestCase<InternalSum> {
         default:
             throw new AssertionError("Illegal randomisation branch");
         }
-        return new InternalSum(name, value, formatter, pipelineAggregators, metadata);
+        return new InternalSum(name, value, formatter, metadata);
     }
 }
