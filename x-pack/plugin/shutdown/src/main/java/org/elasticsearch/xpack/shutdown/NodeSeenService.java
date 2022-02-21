@@ -7,12 +7,13 @@
 
 package org.elasticsearch.xpack.shutdown;
 
-import org.apache.log4j.LogManager;
-import org.apache.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 import org.elasticsearch.cluster.ClusterChangedEvent;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.ClusterStateListener;
+import org.elasticsearch.cluster.ClusterStateTaskExecutor;
 import org.elasticsearch.cluster.ClusterStateUpdateTask;
 import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.cluster.metadata.NodesShutdownMetadata;
@@ -46,8 +47,10 @@ public class NodeSeenService implements ClusterStateListener {
             return;
         }
 
-        if (event.nodesAdded() == false) {
-            // If there's no new nodes this cluster state update, nothing to do.
+        final boolean thisNodeJustBecameMaster = event.previousState().nodes().isLocalNodeElectedMaster() == false
+            && event.state().nodes().isLocalNodeElectedMaster();
+        if ((event.nodesAdded() || thisNodeJustBecameMaster) == false) {
+            // If there's both 1) no new nodes this cluster state update and 2) this node has not just become the master node, nothing to do
             return;
         }
 
@@ -96,10 +99,10 @@ public class NodeSeenService implements ClusterStateListener {
                 }
 
                 @Override
-                public void onFailure(String source, Exception e) {
+                public void onFailure(Exception e) {
                     logger.warn(new ParameterizedMessage("failed to mark shutting down nodes as seen: {}", nodesNotPreviouslySeen), e);
                 }
-            });
+            }, ClusterStateTaskExecutor.unbatched());
         }
     }
 }

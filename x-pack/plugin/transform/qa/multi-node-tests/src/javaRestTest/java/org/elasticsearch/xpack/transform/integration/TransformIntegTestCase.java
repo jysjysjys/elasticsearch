@@ -7,15 +7,16 @@
 
 package org.elasticsearch.xpack.transform.integration;
 
+import org.apache.http.client.methods.HttpGet;
 import org.apache.logging.log4j.Level;
 import org.elasticsearch.ElasticsearchStatusException;
-import org.elasticsearch.action.admin.cluster.node.tasks.list.ListTasksRequest;
 import org.elasticsearch.action.admin.indices.refresh.RefreshRequest;
 import org.elasticsearch.action.bulk.BulkRequest;
 import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.client.Request;
 import org.elasticsearch.client.RequestOptions;
 import org.elasticsearch.client.RestHighLevelClient;
 import org.elasticsearch.client.core.AcknowledgedResponse;
@@ -46,15 +47,9 @@ import org.elasticsearch.client.transform.transforms.pivot.PivotConfig;
 import org.elasticsearch.client.transform.transforms.pivot.SingleGroupSource;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.common.util.concurrent.ThreadContext;
-import org.elasticsearch.common.xcontent.DeprecationHandler;
-import org.elasticsearch.common.xcontent.NamedXContentRegistry;
-import org.elasticsearch.common.xcontent.ToXContent;
-import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentHelper;
-import org.elasticsearch.common.xcontent.XContentParser;
-import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.query.MatchAllQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.rest.RestStatus;
@@ -65,10 +60,16 @@ import org.elasticsearch.search.aggregations.bucket.histogram.DateHistogramInter
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.sort.SortOrder;
 import org.elasticsearch.test.rest.ESRestTestCase;
-import org.joda.time.Instant;
+import org.elasticsearch.xcontent.DeprecationHandler;
+import org.elasticsearch.xcontent.NamedXContentRegistry;
+import org.elasticsearch.xcontent.ToXContent;
+import org.elasticsearch.xcontent.XContentBuilder;
+import org.elasticsearch.xcontent.XContentParser;
+import org.elasticsearch.xcontent.XContentType;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.time.ZoneId;
 import java.util.Base64;
 import java.util.Collections;
@@ -79,9 +80,10 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
-import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
+import static org.elasticsearch.xcontent.XContentFactory.jsonBuilder;
 import static org.hamcrest.core.Is.is;
 
+@SuppressWarnings("removal")
 abstract class TransformIntegTestCase extends ESRestTestCase {
 
     private Map<String, TransformConfig> transformConfigs = new HashMap<>();
@@ -282,14 +284,9 @@ abstract class TransformIntegTestCase extends ESRestTestCase {
         return new AggregationConfig(aggregations);
     }
 
-    protected PivotConfig createPivotConfig(
-        Map<String, SingleGroupSource> groups,
-        AggregatorFactories.Builder aggregations
-    ) throws Exception {
-        return PivotConfig.builder()
-            .setGroups(createGroupConfig(groups))
-            .setAggregationConfig(createAggConfig(aggregations))
-            .build();
+    protected PivotConfig createPivotConfig(Map<String, SingleGroupSource> groups, AggregatorFactories.Builder aggregations)
+        throws Exception {
+        return PivotConfig.builder().setGroups(createGroupConfig(groups)).setAggregationConfig(createAggConfig(aggregations)).build();
     }
 
     protected TransformConfig.Builder createTransformConfigBuilder(
@@ -319,11 +316,13 @@ abstract class TransformIntegTestCase extends ESRestTestCase {
         }
     }
 
-    protected void createReviewsIndex(String indexName,
-                                      int numDocs,
-                                      int numUsers,
-                                      Function<Integer, Integer> userIdProvider,
-                                      Function<Integer, String> dateStringProvider) throws Exception {
+    protected void createReviewsIndex(
+        String indexName,
+        int numDocs,
+        int numUsers,
+        Function<Integer, Integer> userIdProvider,
+        Function<Integer, String> dateStringProvider
+    ) throws Exception {
         assert numUsers > 0;
         try (RestHighLevelClient restClient = new TestRestHighLevelClient()) {
 
@@ -379,27 +378,12 @@ abstract class TransformIntegTestCase extends ESRestTestCase {
 
                 StringBuilder sourceBuilder = new StringBuilder().append("{");
                 if (user != null) {
-                    sourceBuilder
-                        .append("\"user_id\":\"")
-                        .append("user_")
-                        .append(user)
-                        .append("\",");
+                    sourceBuilder.append("\"user_id\":\"").append("user_").append(user).append("\",");
                 }
-                sourceBuilder
-                    .append("\"count\":")
-                    .append(i)
-                    .append(",\"business_id\":\"")
-                    .append("business_")
-                    .append(business)
-                    .append("\",\"stars\":")
-                    .append(stars)
-                    .append(",\"comment\":")
-                    .append("\"Great stuff, deserves " + stars + " stars\"")
-                    .append(",\"regular_object\":{\"foo\": 42}")
-                    .append(",\"nested_object\":{\"bar\": 43}")
-                    .append(",\"timestamp\":\"")
-                    .append(dateString)
-                    .append("\"}");
+                sourceBuilder.append("""
+                    "count":%s,"business_id":"business_%s","stars":%s,"comment":"Great stuff, deserves %s stars","regular_object":\
+                    {"foo": 42},"nested_object":{"bar": 43},"timestamp":"%s"}
+                    """.formatted(i, business, stars, stars, dateString));
                 bulk.add(new IndexRequest().source(sourceBuilder.toString(), XContentType.JSON));
 
                 if (i % 100 == 0) {
@@ -429,13 +413,18 @@ abstract class TransformIntegTestCase extends ESRestTestCase {
     }
 
     private void waitForPendingTasks() {
-        ListTasksRequest listTasksRequest = new ListTasksRequest();
-        listTasksRequest.setWaitForCompletion(true);
-        listTasksRequest.setDetailed(true);
-        listTasksRequest.setTimeout(TimeValue.timeValueSeconds(10));
-        try (RestHighLevelClient restClient = new TestRestHighLevelClient()) {
-
-            restClient.tasks().list(listTasksRequest, RequestOptions.DEFAULT);
+        Request request = new Request(HttpGet.METHOD_NAME, "/_tasks");
+        Map<String, String> parameters = Map.of(
+            "wait_for_completion",
+            Boolean.TRUE.toString(),
+            "detailed",
+            Boolean.TRUE.toString(),
+            "timeout",
+            TimeValue.timeValueSeconds(10).getStringRep()
+        );
+        request.addParameters(parameters);
+        try {
+            client().performRequest(request);
         } catch (Exception e) {
             throw new AssertionError("Failed to wait for pending tasks to complete", e);
         }

@@ -15,13 +15,13 @@ import org.elasticsearch.action.search.SearchAction;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.support.PlainActionFuture;
-import org.elasticsearch.client.Client;
+import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodeRole;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.common.util.CollectionUtils;
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.IndexModule;
 import org.elasticsearch.index.query.MatchAllQueryBuilder;
 import org.elasticsearch.index.shard.SearchOperationListener;
@@ -47,7 +47,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
-import java.util.stream.StreamSupport;
 
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertHitCount;
@@ -96,11 +95,15 @@ public class CrossClusterSearchIT extends AbstractMultiClustersTestCase {
         );
 
         final String nodeWithRemoteClusterClientRole = randomFrom(
-            StreamSupport.stream(localCluster.clusterService().state().nodes().spliterator(), false)
+            localCluster.clusterService()
+                .state()
+                .nodes()
+                .stream()
                 .map(DiscoveryNode::getName)
                 .filter(nodeName -> nodeWithoutRemoteClusterClientRole.equals(nodeName) == false)
                 .filter(nodeName -> nodeName.equals(pureDataNode) == false)
-                .collect(Collectors.toList()));
+                .collect(Collectors.toList())
+        );
 
         final SearchResponse resp = localCluster.client(nodeWithRemoteClusterClientRole)
             .prepareSearch("demo", "cluster_a:prod")
@@ -115,9 +118,17 @@ public class CrossClusterSearchIT extends AbstractMultiClustersTestCase {
         assertAcked(client(LOCAL_CLUSTER).admin().indices().prepareCreate("demo"));
         indexDocs(client(LOCAL_CLUSTER), "demo");
         final String remoteNode = cluster("cluster_a").startDataOnlyNode();
-        assertAcked(client("cluster_a").admin().indices().prepareCreate("prod")
-            .setSettings(Settings.builder().put("index.routing.allocation.require._name", remoteNode)
-                .put(IndexMetadata.SETTING_NUMBER_OF_REPLICAS, 0).build()));
+        assertAcked(
+            client("cluster_a").admin()
+                .indices()
+                .prepareCreate("prod")
+                .setSettings(
+                    Settings.builder()
+                        .put("index.routing.allocation.require._name", remoteNode)
+                        .put(IndexMetadata.SETTING_NUMBER_OF_REPLICAS, 0)
+                        .build()
+                )
+        );
         indexDocs(client("cluster_a"), "prod");
         SearchListenerPlugin.blockQueryPhase();
         try {
@@ -154,7 +165,10 @@ public class CrossClusterSearchIT extends AbstractMultiClustersTestCase {
         final Settings.Builder allocationFilter = Settings.builder();
         if (randomBoolean()) {
             remoteCluster.ensureAtLeastNumDataNodes(3);
-            List<String> remoteDataNodes = StreamSupport.stream(remoteCluster.clusterService().state().nodes().spliterator(), false)
+            List<String> remoteDataNodes = remoteCluster.clusterService()
+                .state()
+                .nodes()
+                .stream()
                 .filter(DiscoveryNode::canContainData)
                 .map(DiscoveryNode::getName)
                 .collect(Collectors.toList());
@@ -169,10 +183,21 @@ public class CrossClusterSearchIT extends AbstractMultiClustersTestCase {
                 allocationFilter.put("index.routing.allocation.include._name", String.join(",", seedNodes));
             }
         }
-        assertAcked(client("cluster_a").admin().indices().prepareCreate("prod")
-            .setSettings(Settings.builder().put(allocationFilter.build()).put(IndexMetadata.SETTING_NUMBER_OF_REPLICAS, 0)));
-        assertFalse(client("cluster_a").admin().cluster().prepareHealth("prod")
-            .setWaitForYellowStatus().setTimeout(TimeValue.timeValueSeconds(10)).get().isTimedOut());
+        assertAcked(
+            client("cluster_a").admin()
+                .indices()
+                .prepareCreate("prod")
+                .setSettings(Settings.builder().put(allocationFilter.build()).put(IndexMetadata.SETTING_NUMBER_OF_REPLICAS, 0))
+        );
+        assertFalse(
+            client("cluster_a").admin()
+                .cluster()
+                .prepareHealth("prod")
+                .setWaitForYellowStatus()
+                .setTimeout(TimeValue.timeValueSeconds(10))
+                .get()
+                .isTimedOut()
+        );
         indexDocs(client("cluster_a"), "prod");
         SearchListenerPlugin.blockQueryPhase();
         PlainActionFuture<SearchResponse> queryFuture = new PlainActionFuture<>();
@@ -183,11 +208,17 @@ public class CrossClusterSearchIT extends AbstractMultiClustersTestCase {
         client(LOCAL_CLUSTER).search(searchRequest, queryFuture);
         SearchListenerPlugin.waitSearchStarted();
         // Get the search task and cancelled
-        final TaskInfo rootTask = client().admin().cluster().prepareListTasks()
+        final TaskInfo rootTask = client().admin()
+            .cluster()
+            .prepareListTasks()
             .setActions(SearchAction.INSTANCE.name())
-            .get().getTasks().stream().filter(t -> t.getParentTaskId().isSet() == false)
-            .findFirst().get();
-        final CancelTasksRequest cancelRequest = new CancelTasksRequest().setTaskId(rootTask.getTaskId());
+            .get()
+            .getTasks()
+            .stream()
+            .filter(t -> t.parentTaskId().isSet() == false)
+            .findFirst()
+            .get();
+        final CancelTasksRequest cancelRequest = new CancelTasksRequest().setTargetTaskId(rootTask.taskId());
         cancelRequest.setWaitForCompletion(randomBoolean());
         final ActionFuture<CancelTasksResponse> cancelFuture = client().admin().cluster().cancelTasks(cancelRequest);
         assertBusy(() -> {

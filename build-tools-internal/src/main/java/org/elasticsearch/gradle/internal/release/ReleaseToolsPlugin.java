@@ -22,6 +22,7 @@ import org.gradle.api.tasks.TaskProvider;
 import org.gradle.api.tasks.util.PatternSet;
 
 import java.io.File;
+
 import javax.inject.Inject;
 
 /**
@@ -40,8 +41,10 @@ public class ReleaseToolsPlugin implements Plugin<Project> {
 
     @Override
     public void apply(Project project) {
-         project.getPluginManager().apply(PrecommitTaskPlugin.class);
+        project.getPluginManager().apply(PrecommitTaskPlugin.class);
         final Directory projectDirectory = projectLayout.getProjectDirectory();
+
+        final Version version = VersionProperties.getElasticsearchVersion();
 
         final FileTree yamlFiles = projectDirectory.dir("docs/changelog")
             .getAsFileTree()
@@ -65,8 +68,6 @@ public class ReleaseToolsPlugin implements Plugin<Project> {
             });
 
         project.getTasks().register("generateReleaseNotes", GenerateReleaseNotesTask.class).configure(task -> {
-            final Version version = VersionProperties.getElasticsearchVersion();
-
             task.setGroup("Documentation");
             task.setDescription("Generates release notes from changelog files held in this checkout");
             task.setChangelogs(yamlFiles);
@@ -83,7 +84,7 @@ public class ReleaseToolsPlugin implements Plugin<Project> {
             task.setReleaseHighlightsFile(projectDirectory.file("docs/reference/release-notes/highlights.asciidoc"));
 
             task.setBreakingChangesTemplate(projectDirectory.file(RESOURCES + "templates/breaking-changes.asciidoc"));
-            task.setBreakingChangesFile(
+            task.setBreakingChangesMigrationFile(
                 projectDirectory.file(
                     String.format("docs/reference/migration/migrate_%d_%d.asciidoc", version.getMajor(), version.getMinor())
                 )
@@ -92,6 +93,12 @@ public class ReleaseToolsPlugin implements Plugin<Project> {
             task.dependsOn(validateChangelogsTask);
         });
 
-         project.getTasks().named("precommit").configure(task -> task.dependsOn(validateChangelogsTask));
+        project.getTasks().register("pruneChangelogs", PruneChangelogsTask.class).configure(task -> {
+            task.setGroup("Documentation");
+            task.setDescription("Removes changelog files that have been used in a previous release");
+            task.setChangelogs(yamlFiles);
+        });
+
+        project.getTasks().named("precommit").configure(task -> task.dependsOn(validateChangelogsTask));
     }
 }

@@ -8,13 +8,17 @@
 
 package org.elasticsearch.search.aggregations.metrics;
 
+import org.elasticsearch.common.util.Maps;
 import org.elasticsearch.search.DocValueFormat;
 import org.elasticsearch.search.aggregations.ParsedAggregation;
+import org.elasticsearch.search.aggregations.support.SamplingContext;
 import org.elasticsearch.test.InternalAggregationTestCase;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import static org.hamcrest.Matchers.equalTo;
 
 public class InternalMaxTests extends InternalAggregationTestCase<InternalMax> {
 
@@ -28,6 +32,16 @@ public class InternalMaxTests extends InternalAggregationTestCase<InternalMax> {
     @Override
     protected void assertReduced(InternalMax reduced, List<InternalMax> inputs) {
         assertEquals(inputs.stream().mapToDouble(InternalMax::value).max().getAsDouble(), reduced.value(), 0);
+    }
+
+    @Override
+    protected boolean supportsSampling() {
+        return true;
+    }
+
+    @Override
+    protected void assertSampled(InternalMax sampled, InternalMax reduced, SamplingContext samplingContext) {
+        assertThat(sampled.getValue(), equalTo(reduced.getValue()));
     }
 
     @Override
@@ -50,26 +64,26 @@ public class InternalMaxTests extends InternalAggregationTestCase<InternalMax> {
         DocValueFormat formatter = instance.format;
         Map<String, Object> metadata = instance.getMetadata();
         switch (between(0, 2)) {
-        case 0:
-            name += randomAlphaOfLength(5);
-            break;
-        case 1:
-            if (Double.isFinite(value)) {
-                value += between(1, 100);
-            } else {
-                value = between(1, 100);
-            }
-            break;
-        case 2:
-            if (metadata == null) {
-                metadata = new HashMap<>(1);
-            } else {
-                metadata = new HashMap<>(instance.getMetadata());
-            }
-            metadata.put(randomAlphaOfLength(15), randomInt());
-            break;
-        default:
-            throw new AssertionError("Illegal randomisation branch");
+            case 0:
+                name += randomAlphaOfLength(5);
+                break;
+            case 1:
+                if (Double.isFinite(value)) {
+                    value += between(1, 100);
+                } else {
+                    value = between(1, 100);
+                }
+                break;
+            case 2:
+                if (metadata == null) {
+                    metadata = Maps.newMapWithExpectedSize(1);
+                } else {
+                    metadata = new HashMap<>(instance.getMetadata());
+                }
+                metadata.put(randomAlphaOfLength(15), randomInt());
+                break;
+            default:
+                throw new AssertionError("Illegal randomisation branch");
         }
         return new InternalMax(name, value, formatter, metadata);
     }

@@ -8,7 +8,8 @@
 
 package org.elasticsearch.index.mapper;
 
-import org.elasticsearch.common.xcontent.ToXContentFragment;
+import org.elasticsearch.common.Strings;
+import org.elasticsearch.xcontent.ToXContentFragment;
 
 import java.util.Map;
 import java.util.Objects;
@@ -28,7 +29,7 @@ public abstract class Mapper implements ToXContentFragment, Iterable<Mapper> {
         }
 
         /** Returns a newly built mapper. */
-        public abstract Mapper build(ContentPath contentPath);
+        public abstract Mapper build(MapperBuilderContext context);
     }
 
     public interface TypeParser {
@@ -66,4 +67,8 @@ public abstract class Mapper implements ToXContentFragment, Iterable<Mapper> {
      */
     public abstract void validate(MappingLookup mappers);
 
+    @Override
+    public String toString() {
+        return Strings.toString(this);
+    }
 }

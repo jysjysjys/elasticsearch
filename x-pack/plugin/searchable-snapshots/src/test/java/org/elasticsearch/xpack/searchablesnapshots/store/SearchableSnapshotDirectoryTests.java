@@ -56,8 +56,8 @@ import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.common.util.Maps;
 import org.elasticsearch.common.util.MockBigArrays;
-import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.core.CheckedFunction;
 import org.elasticsearch.core.PathUtils;
 import org.elasticsearch.core.PathUtilsForTesting;
@@ -88,6 +88,7 @@ import org.elasticsearch.repositories.fs.FsRepository;
 import org.elasticsearch.snapshots.SnapshotId;
 import org.elasticsearch.test.DummyShardLock;
 import org.elasticsearch.test.IndexSettingsModule;
+import org.elasticsearch.xcontent.NamedXContentRegistry;
 import org.elasticsearch.xpack.searchablesnapshots.AbstractSearchableSnapshotsTestCase;
 import org.elasticsearch.xpack.searchablesnapshots.cache.common.TestUtils;
 import org.elasticsearch.xpack.searchablesnapshots.cache.full.CacheService;
@@ -544,7 +545,7 @@ public class SearchableSnapshotDirectoryTests extends AbstractSearchableSnapshot
                 if (randomBoolean()) {
                     writer.forceMerge(1, true);
                 }
-                final Map<String, String> userData = new HashMap<>(2);
+                final Map<String, String> userData = Maps.newMapWithExpectedSize(2);
                 userData.put(SequenceNumbers.LOCAL_CHECKPOINT_KEY, "0");
                 userData.put(Translog.TRANSLOG_UUID_KEY, UUIDs.randomBase64UUID(random()));
                 writer.setLiveCommitData(userData.entrySet());
@@ -584,7 +585,7 @@ public class SearchableSnapshotDirectoryTests extends AbstractSearchableSnapshot
                         Settings.builder()
                             .put(Environment.PATH_HOME_SETTING.getKey(), createTempDir().toAbsolutePath())
                             .put(Environment.PATH_REPO_SETTING.getKey(), repositoryPath.toAbsolutePath())
-                            .put(Environment.PATH_DATA_SETTING.getKey(), createTempDir().toAbsolutePath())
+                            .putList(Environment.PATH_DATA_SETTING.getKey(), tmpPaths())
                             .build(),
                         null
                     ),
@@ -629,7 +630,7 @@ public class SearchableSnapshotDirectoryTests extends AbstractSearchableSnapshot
                 final BlobContainer blobContainer = repository.shardContainer(indexId, shardId.id());
                 final BlobStoreIndexShardSnapshot snapshot = repository.loadShardSnapshot(blobContainer, snapshotId);
 
-                final Path shardDir = shardPath(shardId);
+                final Path shardDir = randomShardPath(shardId);
                 final ShardPath shardPath = new ShardPath(false, shardDir, shardDir, shardId);
                 final Path cacheDir = Files.createDirectories(resolveSnapshotCache(shardDir).resolve(snapshotId.getUUID()));
                 final CacheService cacheService = defaultCacheService();
@@ -737,7 +738,7 @@ public class SearchableSnapshotDirectoryTests extends AbstractSearchableSnapshot
             final IndexId indexId = new IndexId("_id", "_uuid");
             final ShardId shardId = new ShardId(new Index("_name", "_id"), 0);
 
-            final Path shardDir = shardPath(shardId);
+            final Path shardDir = randomShardPath(shardId);
             final ShardPath shardPath = new ShardPath(false, shardDir, shardDir, shardId);
             final Path cacheDir = Files.createDirectories(resolveSnapshotCache(shardDir).resolve(snapshotId.getUUID()));
             final FrozenCacheService frozenCacheService = defaultFrozenCacheService();
