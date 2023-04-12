@@ -8,7 +8,6 @@
 
 package org.elasticsearch.search.simple;
 
-import org.apache.lucene.util.Version;
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.search.SearchPhaseExecutionException;
 import org.elasticsearch.action.search.SearchRequestBuilder;
@@ -345,7 +344,6 @@ public class SimpleSearchIT extends ESIntegTestCase {
     }
 
     public void testSimpleIndexSortEarlyTerminate() throws Exception {
-        skipTestWaitingForLuceneFix(Version.fromBits(9, 1, 0), "LUCENE-10377");
         prepareCreate("test").setSettings(
             Settings.builder().put(SETTING_NUMBER_OF_SHARDS, 1).put(SETTING_NUMBER_OF_REPLICAS, 0).put("index.sort.field", "rank")
         ).setMapping("rank", "type=integer").get();
@@ -433,18 +431,10 @@ public class SimpleSearchIT extends ESIntegTestCase {
 
     public void testTooLargeFromAndSizeOkByDynamicSetting() throws Exception {
         createIndex("idx");
-        assertAcked(
-            client().admin()
-                .indices()
-                .prepareUpdateSettings("idx")
-                .setSettings(
-                    Settings.builder()
-                        .put(
-                            IndexSettings.MAX_RESULT_WINDOW_SETTING.getKey(),
-                            IndexSettings.MAX_RESULT_WINDOW_SETTING.get(Settings.EMPTY) * 2
-                        )
-                )
-                .get()
+        updateIndexSettings(
+            Settings.builder()
+                .put(IndexSettings.MAX_RESULT_WINDOW_SETTING.getKey(), IndexSettings.MAX_RESULT_WINDOW_SETTING.get(Settings.EMPTY) * 2),
+            "idx"
         );
         indexRandom(true, client().prepareIndex("idx").setSource("{}", XContentType.JSON));
 
@@ -514,13 +504,7 @@ public class SimpleSearchIT extends ESIntegTestCase {
     public void testTooLargeRescoreOkByDynamicSetting() throws Exception {
         int defaultMaxWindow = IndexSettings.MAX_RESCORE_WINDOW_SETTING.get(Settings.EMPTY);
         createIndex("idx");
-        assertAcked(
-            client().admin()
-                .indices()
-                .prepareUpdateSettings("idx")
-                .setSettings(Settings.builder().put(IndexSettings.MAX_RESCORE_WINDOW_SETTING.getKey(), defaultMaxWindow * 2))
-                .get()
-        );
+        updateIndexSettings(Settings.builder().put(IndexSettings.MAX_RESCORE_WINDOW_SETTING.getKey(), defaultMaxWindow * 2), "idx");
         indexRandom(true, client().prepareIndex("idx").setSource("{}", XContentType.JSON));
 
         assertHitCount(
@@ -532,15 +516,10 @@ public class SimpleSearchIT extends ESIntegTestCase {
     public void testTooLargeRescoreOkByDynamicResultWindowSetting() throws Exception {
         int defaultMaxWindow = IndexSettings.MAX_RESCORE_WINDOW_SETTING.get(Settings.EMPTY);
         createIndex("idx");
-        assertAcked(
-            client().admin()
-                .indices()
-                .prepareUpdateSettings("idx")
-                .setSettings(
-                    // Note that this is the RESULT window
-                    Settings.builder().put(IndexSettings.MAX_RESULT_WINDOW_SETTING.getKey(), defaultMaxWindow * 2)
-                )
-                .get()
+        updateIndexSettings(
+            // Note that this is the RESULT window
+            Settings.builder().put(IndexSettings.MAX_RESULT_WINDOW_SETTING.getKey(), defaultMaxWindow * 2),
+            "idx"
         );
         indexRandom(true, client().prepareIndex("idx").setSource("{}", XContentType.JSON));
 

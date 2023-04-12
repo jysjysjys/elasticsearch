@@ -8,7 +8,6 @@
 
 package org.elasticsearch.index.query;
 
-import org.apache.lucene.analysis.MockSynonymAnalyzer;
 import org.apache.lucene.analysis.core.StopAnalyzer;
 import org.apache.lucene.analysis.en.EnglishAnalyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
@@ -21,6 +20,7 @@ import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchNoDocsQuery;
 import org.apache.lucene.search.PhraseQuery;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.tests.analysis.MockSynonymAnalyzer;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.IndexSettings;
@@ -84,7 +84,7 @@ public class CombinedFieldsQueryParsingTests extends MapperServiceTestCase {
 
     @Override
     protected IndexAnalyzers createIndexAnalyzers(IndexSettings indexSettings) {
-        return new IndexAnalyzers(
+        return IndexAnalyzers.of(
             Map.of(
                 "default",
                 new NamedAnalyzer("default", AnalyzerScope.INDEX, new StandardAnalyzer()),
@@ -92,9 +92,7 @@ public class CombinedFieldsQueryParsingTests extends MapperServiceTestCase {
                 new NamedAnalyzer("mock_synonym", AnalyzerScope.INDEX, new MockSynonymAnalyzer()),
                 "stop",
                 new NamedAnalyzer("stop", AnalyzerScope.INDEX, new StopAnalyzer(EnglishAnalyzer.ENGLISH_STOP_WORDS_SET))
-            ),
-            Map.of(),
-            Map.of()
+            )
         );
     }
 

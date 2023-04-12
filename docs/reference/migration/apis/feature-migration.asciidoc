@@ -18,9 +18,9 @@ process.
 [[feature-migration-api-request]]
 ==== {api-request-title}
 
-`GET /migration/system_features`
+`GET /_migration/system_features`
 
-`POST /migration/system_features`
+`POST /_migration/system_features`
 
 [[feature-migration-api-prereqs]]
 ==== {api-prereq-title}
@@ -62,6 +62,12 @@ Example response:
     },
     {
       "feature_name" : "enrich",
+      "minimum_index_version" : "8.0.0",
+      "migration_status" : "NO_MIGRATION_NEEDED",
+      "indices" : [ ]
+    },
+    {
+      "feature_name" : "ent_search",
       "minimum_index_version" : "8.0.0",
       "migration_status" : "NO_MIGRATION_NEEDED",
       "indices" : [ ]
