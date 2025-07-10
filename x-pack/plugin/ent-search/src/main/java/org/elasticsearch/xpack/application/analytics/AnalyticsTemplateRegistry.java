@@ -11,43 +11,44 @@ import org.elasticsearch.cluster.metadata.ComponentTemplate;
 import org.elasticsearch.cluster.metadata.ComposableIndexTemplate;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.core.UpdateForV10;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.xcontent.NamedXContentRegistry;
 import org.elasticsearch.xcontent.XContentParserConfiguration;
 import org.elasticsearch.xcontent.json.JsonXContent;
-import org.elasticsearch.xpack.core.ilm.LifecyclePolicy;
 import org.elasticsearch.xpack.core.template.IndexTemplateConfig;
 import org.elasticsearch.xpack.core.template.IndexTemplateRegistry;
-import org.elasticsearch.xpack.core.template.LifecyclePolicyConfig;
+import org.elasticsearch.xpack.core.template.IngestPipelineConfig;
+import org.elasticsearch.xpack.core.template.JsonIngestPipelineConfig;
 
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Stream;
 
+import static org.elasticsearch.xpack.application.analytics.AnalyticsConstants.EVENT_DATA_STREAM_INDEX_PATTERN;
+import static org.elasticsearch.xpack.application.analytics.AnalyticsConstants.EVENT_DATA_STREAM_INDEX_PREFIX;
+import static org.elasticsearch.xpack.application.analytics.AnalyticsConstants.ROOT_RESOURCE_PATH;
+import static org.elasticsearch.xpack.application.analytics.AnalyticsConstants.TEMPLATE_VERSION_VARIABLE;
 import static org.elasticsearch.xpack.core.ClientHelper.ENT_SEARCH_ORIGIN;
 
+/**
+ * @deprecated in 9.0
+ */
+@Deprecated
+@UpdateForV10(owner = UpdateForV10.Owner.ENTERPRISE_SEARCH)
 public class AnalyticsTemplateRegistry extends IndexTemplateRegistry {
-    public static final String ROOT_RESOURCE_PATH = "/org/elasticsearch/xpack/entsearch/analytics/";
 
     // This number must be incremented when we make changes to built-in templates.
-    public static final int REGISTRY_VERSION = 1;
-
-    // The variable to be replaced with the template version number
-    public static final String TEMPLATE_VERSION_VARIABLE = "xpack.entsearch.analytics.template.version";
-
-    // ILM Policies configuration
-    public static final String EVENT_DATA_STREAM_ILM_POLICY_NAME = "behavioral_analytics-events-default_policy";
-    private static final List<LifecyclePolicy> LIFECYCLE_POLICIES = Stream.of(
-        new LifecyclePolicyConfig(EVENT_DATA_STREAM_ILM_POLICY_NAME, ROOT_RESOURCE_PATH + EVENT_DATA_STREAM_ILM_POLICY_NAME + ".json")
-    ).map(config -> config.load(LifecyclePolicyConfig.DEFAULT_X_CONTENT_REGISTRY)).toList();
+    static final int REGISTRY_VERSION = 3;
 
     // Index template components configuration
-    public static final String EVENT_DATA_STREAM_SETTINGS_COMPONENT_NAME = "behavioral_analytics-events-settings";
-    public static final String EVENT_DATA_STREAM_MAPPINGS_COMPONENT_NAME = "behavioral_analytics-events-mappings";
+    static final String EVENT_DATA_STREAM_SETTINGS_COMPONENT_NAME = EVENT_DATA_STREAM_INDEX_PREFIX + "settings";
+    static final String EVENT_DATA_STREAM_MAPPINGS_COMPONENT_NAME = EVENT_DATA_STREAM_INDEX_PREFIX + "mappings";
 
-    private static final Map<String, ComponentTemplate> COMPONENT_TEMPLATES;
+    static final String EVENT_DATA_STREAM_INGEST_PIPELINE_NAME = EVENT_DATA_STREAM_INDEX_PREFIX + "final_pipeline";
+
+    static final Map<String, ComponentTemplate> COMPONENT_TEMPLATES;
 
     static {
         final Map<String, ComponentTemplate> componentTemplates = new HashMap<>();
@@ -65,11 +66,8 @@ public class AnalyticsTemplateRegistry extends IndexTemplateRegistry {
                 TEMPLATE_VERSION_VARIABLE
             )
         )) {
-            try {
-                componentTemplates.put(
-                    config.getTemplateName(),
-                    ComponentTemplate.parse(JsonXContent.jsonXContent.createParser(XContentParserConfiguration.EMPTY, config.loadBytes()))
-                );
+            try (var parser = JsonXContent.jsonXContent.createParser(XContentParserConfiguration.EMPTY, config.loadBytes())) {
+                componentTemplates.put(config.getTemplateName(), ComponentTemplate.parse(parser));
             } catch (IOException e) {
                 throw new AssertionError(e);
             }
@@ -77,15 +75,23 @@ public class AnalyticsTemplateRegistry extends IndexTemplateRegistry {
         COMPONENT_TEMPLATES = Map.copyOf(componentTemplates);
     }
 
+    @Override
+    protected List<IngestPipelineConfig> getIngestPipelines() {
+        return List.of(
+            new JsonIngestPipelineConfig(
+                EVENT_DATA_STREAM_INGEST_PIPELINE_NAME,
+                ROOT_RESOURCE_PATH + EVENT_DATA_STREAM_INGEST_PIPELINE_NAME + ".json",
+                REGISTRY_VERSION,
+                TEMPLATE_VERSION_VARIABLE
+            )
+        );
+    }
+
     // Composable index templates configuration.
-    public static final String EVENT_DATA_STREAM_INDEX_PREFIX = "behavioral_analytics-events-";
+    static final String EVENT_DATA_STREAM_TEMPLATE_NAME = EVENT_DATA_STREAM_INDEX_PREFIX + "default";
+    static final String EVENT_DATA_STREAM_TEMPLATE_FILENAME = EVENT_DATA_STREAM_INDEX_PREFIX + "template";
 
-    public static final String EVENT_DATA_STREAM_INDEX_PATTERN = EVENT_DATA_STREAM_INDEX_PREFIX + "*";
-    public static final String EVENT_DATA_STREAM_TEMPLATE_NAME = "behavioral_analytics-events-default";
-
-    private static final String EVENT_DATA_STREAM_TEMPLATE_FILENAME = "behavioral_analytics-events-template";
-
-    private static final Map<String, ComposableIndexTemplate> COMPOSABLE_INDEX_TEMPLATES = parseComposableTemplates(
+    static final Map<String, ComposableIndexTemplate> COMPOSABLE_INDEX_TEMPLATES = parseComposableTemplates(
         new IndexTemplateConfig(
             EVENT_DATA_STREAM_TEMPLATE_NAME,
             ROOT_RESOURCE_PATH + EVENT_DATA_STREAM_TEMPLATE_FILENAME + ".json",
@@ -107,11 +113,6 @@ public class AnalyticsTemplateRegistry extends IndexTemplateRegistry {
     @Override
     protected String getOrigin() {
         return ENT_SEARCH_ORIGIN;
-    }
-
-    @Override
-    protected List<LifecyclePolicy> getPolicyConfigs() {
-        return LIFECYCLE_POLICIES;
     }
 
     @Override

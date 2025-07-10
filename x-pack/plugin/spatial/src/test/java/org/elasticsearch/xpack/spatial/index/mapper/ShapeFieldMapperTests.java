@@ -8,9 +8,10 @@ package org.elasticsearch.xpack.spatial.index.mapper;
 
 import org.apache.lucene.document.ShapeField;
 import org.apache.lucene.index.IndexableField;
-import org.elasticsearch.Version;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.geo.Orientation;
+import org.elasticsearch.index.IndexVersion;
+import org.elasticsearch.index.IndexVersions;
 import org.elasticsearch.index.mapper.AbstractGeometryFieldMapper;
 import org.elasticsearch.index.mapper.AbstractShapeGeometryFieldMapper;
 import org.elasticsearch.index.mapper.AbstractShapeGeometryFieldMapper.AbstractShapeGeometryFieldType;
@@ -21,7 +22,7 @@ import org.elasticsearch.index.mapper.Mapper;
 import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.mapper.ParsedDocument;
 import org.elasticsearch.index.mapper.SourceToParse;
-import org.elasticsearch.test.VersionUtils;
+import org.elasticsearch.test.index.IndexVersionUtils;
 import org.elasticsearch.xcontent.ToXContent;
 import org.junit.AssumptionViolatedException;
 
@@ -106,8 +107,11 @@ public class ShapeFieldMapperTests extends CartesianFieldMapperTests {
     }
 
     public void testDefaultDocValueConfigurationOnPre8_4() throws IOException {
-        // TODO verify which version this test is actually valid for (when PR is actually merged)
-        Version oldVersion = VersionUtils.randomVersionBetween(random(), Version.V_7_0_0, Version.V_8_3_0);
+        IndexVersion oldVersion = IndexVersionUtils.randomVersionBetween(
+            random(),
+            IndexVersions.MINIMUM_READONLY_COMPATIBLE,
+            IndexVersions.V_8_3_0
+        );
         DocumentMapper defaultMapper = createDocumentMapper(oldVersion, fieldMapping(this::minimalMapping));
         Mapper fieldMapper = defaultMapper.mappers().getMapper(FIELD_NAME);
         assertThat(fieldMapper, instanceOf(fieldMapperClass()));
@@ -328,7 +332,7 @@ public class ShapeFieldMapperTests extends CartesianFieldMapperTests {
             b.startObject("keyword").field("type", "keyword").endObject();
             b.endObject();
         }));
-        assertWarnings("Adding multifields to [" + getFieldName() + "] mappers has no effect and will be forbidden in future");
+        assertWarnings("Adding multifields to [" + getFieldName() + "] mappers has no effect");
     }
 
     public void testSelfIntersectPolygon() throws IOException {
@@ -361,7 +365,7 @@ public class ShapeFieldMapperTests extends CartesianFieldMapperTests {
 
     @Override
     protected SyntheticSourceSupport syntheticSourceSupport(boolean ignoreMalformed) {
-        throw new AssumptionViolatedException("not supported");
+        return new GeometricShapeSyntheticSourceSupport(GeometricShapeSyntheticSourceSupport.FieldType.SHAPE, ignoreMalformed);
     }
 
     @Override

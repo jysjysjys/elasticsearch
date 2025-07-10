@@ -1,9 +1,10 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License
- * 2.0 and the Server Side Public License, v 1; you may not use this file except
- * in compliance with, at your election, the Elastic License 2.0 or the Server
- * Side Public License, v 1.
+ * or more contributor license agreements. Licensed under the "Elastic License
+ * 2.0", the "GNU Affero General Public License v3.0 only", and the "Server Side
+ * Public License v 1"; you may not use this file except in compliance with, at
+ * your election, the "Elastic License 2.0", the "GNU Affero General Public
+ * License v3.0 only", or the "Server Side Public License, v 1".
  */
 
 package org.elasticsearch.cluster.coordination;
@@ -13,13 +14,12 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.support.SubscribableListener;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.coordination.ClusterStatePublisher.AckListener;
 import org.elasticsearch.cluster.node.DiscoveryNode;
-import org.elasticsearch.common.util.concurrent.ListenableFuture;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.transport.TransportException;
-import org.elasticsearch.transport.TransportResponse;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -38,7 +38,7 @@ public abstract class Publication {
     private final LongSupplier currentTimeSupplier;
     private final long startTime;
 
-    private Optional<ListenableFuture<ApplyCommitRequest>> applyCommitRequest; // set when state is committed
+    private Optional<SubscribableListener<ApplyCommitRequest>> applyCommitRequest; // set when state is committed
     private boolean isCompleted; // set when publication is completed
     private boolean cancelled; // set when publication is cancelled
 
@@ -174,7 +174,7 @@ public abstract class Publication {
 
     protected abstract boolean isPublishQuorum(CoordinationState.VoteCollection votes);
 
-    protected abstract Optional<ListenableFuture<ApplyCommitRequest>> handlePublishResponse(
+    protected abstract Optional<SubscribableListener<ApplyCommitRequest>> handlePublishResponse(
         DiscoveryNode sourceNode,
         PublishResponse publishResponse
     );
@@ -192,7 +192,7 @@ public abstract class Publication {
     protected abstract void sendApplyCommit(
         DiscoveryNode destination,
         ApplyCommitRequest applyCommit,
-        ActionListener<TransportResponse.Empty> responseActionListener
+        ActionListener<Void> responseActionListener
     );
 
     protected abstract <T> ActionListener<T> wrapListener(ActionListener<T> listener);
@@ -367,8 +367,8 @@ public abstract class Publication {
 
                 if (response.getJoin().isPresent()) {
                     final Join join = response.getJoin().get();
-                    assert discoveryNode.equals(join.getSourceNode());
-                    assert join.getTerm() == response.getPublishResponse().getTerm() : response;
+                    assert discoveryNode.equals(join.votingNode());
+                    assert join.term() == response.getPublishResponse().getTerm() : response;
                     logger.trace("handling join within publish response: {}", join);
                     onJoin(join);
                 } else {
@@ -405,10 +405,10 @@ public abstract class Publication {
             return e;
         }
 
-        private class ApplyCommitResponseHandler implements ActionListener<TransportResponse.Empty> {
+        private class ApplyCommitResponseHandler implements ActionListener<Void> {
 
             @Override
-            public void onResponse(TransportResponse.Empty ignored) {
+            public void onResponse(Void ignored) {
                 if (isFailed()) {
                     logger.debug("ApplyCommitResponseHandler.handleResponse: already failed, ignoring response from [{}]", discoveryNode);
                     return;

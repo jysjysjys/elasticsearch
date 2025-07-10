@@ -29,14 +29,13 @@ import org.elasticsearch.xpack.core.transform.transforms.AuthorizationState;
 import org.elasticsearch.xpack.core.transform.transforms.TransformCheckpoint;
 import org.elasticsearch.xpack.core.transform.transforms.TransformConfig;
 import org.elasticsearch.xpack.core.transform.transforms.TransformConfigUpdate;
-import org.elasticsearch.xpack.core.transform.transforms.TransformDestIndexSettings;
 import org.elasticsearch.xpack.core.transform.transforms.TransformStoredDoc;
 import org.elasticsearch.xpack.core.transform.transforms.persistence.TransformInternalIndexConstants;
+import org.elasticsearch.xpack.transform.notifications.TransformAuditor;
 import org.elasticsearch.xpack.transform.persistence.SeqNoPrimaryTermAndIndex;
 import org.elasticsearch.xpack.transform.persistence.TransformConfigManager;
 import org.elasticsearch.xpack.transform.persistence.TransformIndex;
 
-import java.time.Clock;
 import java.util.Map;
 
 /**
@@ -118,6 +117,7 @@ public class TransformUpdater {
         Settings settings,
         Client client,
         TransformConfigManager transformConfigManager,
+        TransformAuditor auditor,
         final TransformConfig config,
         final TransformConfigUpdate update,
         final SeqNoPrimaryTermAndIndex seqNoPrimaryTermAndIndex,
@@ -125,6 +125,7 @@ public class TransformUpdater {
         final boolean dryRun,
         final boolean checkAccess,
         final TimeValue timeout,
+        final Settings destIndexSettings,
         ActionListener<UpdateResult> listener
     ) {
         // rewrite config into a new format if necessary
@@ -179,11 +180,13 @@ public class TransformUpdater {
             updateTransformConfiguration(
                 client,
                 transformConfigManager,
+                auditor,
                 indexNameExpressionResolver,
                 updatedConfig,
                 destIndexMappings,
                 seqNoPrimaryTermAndIndex,
                 clusterState,
+                destIndexSettings,
                 ActionListener.wrap(r -> updateTransformListener.onResponse(null), listener::onFailure)
             );
         }, listener::onFailure);
@@ -249,7 +252,7 @@ public class TransformUpdater {
             long lastCheckpoint = currentState.v1().getTransformState().getCheckpoint();
 
             // if: the state is stored on the latest index, it does not need an update
-            if (currentState.v2().getIndex().equals(TransformInternalIndexConstants.LATEST_INDEX_VERSIONED_NAME)) {
+            if (transformConfigManager.isLatestTransformIndex(currentState.v2().getIndex())) {
                 listener.onResponse(lastCheckpoint);
                 return;
             }
@@ -280,8 +283,7 @@ public class TransformUpdater {
         ActionListener<Boolean> listener
     ) {
         transformConfigManager.getTransformCheckpointForUpdate(transformId, lastCheckpoint, ActionListener.wrap(checkpointAndVersion -> {
-            if (checkpointAndVersion == null
-                || checkpointAndVersion.v2().getIndex().equals(TransformInternalIndexConstants.LATEST_INDEX_VERSIONED_NAME)) {
+            if (checkpointAndVersion == null || transformConfigManager.isLatestTransformIndex(checkpointAndVersion.v2().getIndex())) {
                 listener.onResponse(true);
                 return;
             }
@@ -293,11 +295,13 @@ public class TransformUpdater {
     private static void updateTransformConfiguration(
         Client client,
         TransformConfigManager transformConfigManager,
+        TransformAuditor auditor,
         IndexNameExpressionResolver indexNameExpressionResolver,
         TransformConfig config,
-        Map<String, String> mappings,
+        Map<String, String> destIndexMappings,
         SeqNoPrimaryTermAndIndex seqNoPrimaryTermAndIndex,
         ClusterState clusterState,
+        Settings destIndexSettings,
         ActionListener<Void> listener
     ) {
         // <3> Return to the listener
@@ -328,11 +332,9 @@ public class TransformUpdater {
         );
 
         // <1> Create destination index if necessary
-        String[] dest = indexNameExpressionResolver.concreteIndexNames(
-            clusterState,
-            IndicesOptions.lenientExpandOpen(),
-            config.getDestination().getIndex()
-        );
+        final String destinationIndex = config.getDestination().getIndex();
+        String[] dest = indexNameExpressionResolver.concreteIndexNames(clusterState, IndicesOptions.lenientExpandOpen(), destinationIndex);
+
         String[] src = indexNameExpressionResolver.concreteIndexNames(
             clusterState,
             IndicesOptions.lenientExpandOpen(),
@@ -345,26 +347,20 @@ public class TransformUpdater {
         // we allow source indices to disappear. If the source and destination indices do not exist, don't do anything
         // the transform will just have to dynamically create the destination index without special mapping.
             && src.length > 0) {
-            createDestinationIndex(client, config, mappings, createDestinationListener);
+            TransformIndex.createDestinationIndex(
+                client,
+                auditor,
+                indexNameExpressionResolver,
+                clusterState,
+                config,
+                destIndexSettings,
+                destIndexMappings,
+                createDestinationListener
+            );
         } else {
             createDestinationListener.onResponse(null);
         }
     }
 
-    private static void createDestinationIndex(
-        Client client,
-        TransformConfig config,
-        Map<String, String> mappings,
-        ActionListener<Boolean> listener
-    ) {
-        TransformDestIndexSettings generatedDestIndexSettings = TransformIndex.createTransformDestIndexSettings(
-            mappings,
-            config.getId(),
-            Clock.systemUTC()
-        );
-        TransformIndex.createDestinationIndex(client, config, generatedDestIndexSettings, listener);
-    }
-
     private TransformUpdater() {}
-
 }

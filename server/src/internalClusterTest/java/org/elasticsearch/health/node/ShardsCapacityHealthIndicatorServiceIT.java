@@ -1,9 +1,10 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License
- * 2.0 and the Server Side Public License, v 1; you may not use this file except
- * in compliance with, at your election, the Elastic License 2.0 or the Server
- * Side Public License, v 1.
+ * or more contributor license agreements. Licensed under the "Elastic License
+ * 2.0", the "GNU Affero General Public License v3.0 only", and the "Server Side
+ * Public License v 1"; you may not use this file except in compliance with, at
+ * your election, the "Elastic License 2.0", the "GNU Affero General Public
+ * License v3.0 only", or the "Server Side Public License, v 1".
  */
 
 package org.elasticsearch.health.node;
@@ -15,31 +16,24 @@ import org.elasticsearch.health.HealthService;
 import org.elasticsearch.health.HealthStatus;
 import org.elasticsearch.health.metadata.HealthMetadata;
 import org.elasticsearch.test.ESIntegTestCase;
-import org.elasticsearch.test.InternalTestCluster;
-import org.elasticsearch.test.NodeRoles;
 import org.junit.After;
 import org.junit.Before;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static org.elasticsearch.cluster.metadata.IndexMetadata.SETTING_NUMBER_OF_REPLICAS;
-import static org.elasticsearch.cluster.metadata.IndexMetadata.SETTING_NUMBER_OF_SHARDS;
-import static org.elasticsearch.cluster.node.DiscoveryNodeRole.DATA_FROZEN_NODE_ROLE;
 import static org.elasticsearch.indices.ShardLimitValidator.SETTING_CLUSTER_MAX_SHARDS_PER_NODE;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.hasSize;
 
-@ESIntegTestCase.ClusterScope(scope = ESIntegTestCase.Scope.TEST, numDataNodes = 0)
+@ESIntegTestCase.ClusterScope(scope = ESIntegTestCase.Scope.TEST, numDataNodes = 1, numClientNodes = 0, supportsDedicatedMasters = false)
 public class ShardsCapacityHealthIndicatorServiceIT extends ESIntegTestCase {
 
     private static final String INDEX_NAME = "index-name";
-    private InternalTestCluster internalCluster;
 
     @Before
     public void setUp() throws Exception {
         super.setUp();
-        internalCluster = internalCluster();
         updateClusterSettings(Settings.builder().put(SETTING_CLUSTER_MAX_SHARDS_PER_NODE.getKey(), 30));
     }
 
@@ -56,7 +50,7 @@ public class ShardsCapacityHealthIndicatorServiceIT extends ESIntegTestCase {
         // index: 4 shards + 1 replica = 8 shards used (30 - 8 = 22 > 10 available shards)
         createIndex(4, 1);
 
-        var result = fetchShardsCapacityIndicatorResult(internalCluster);
+        var result = fetchShardsCapacityIndicatorResult();
         assertEquals(result.status(), HealthStatus.GREEN);
         assertEquals(result.symptom(), "The cluster has enough room to add new shards.");
         assertThat(result.diagnosisList(), empty());
@@ -67,7 +61,7 @@ public class ShardsCapacityHealthIndicatorServiceIT extends ESIntegTestCase {
         // index: 11 shards + 1 replica = 22 shards used (30 - 22 < 10 available shards)
         createIndex(10, 1);
 
-        var result = fetchShardsCapacityIndicatorResult(internalCluster);
+        var result = fetchShardsCapacityIndicatorResult();
         assertEquals(result.status(), HealthStatus.YELLOW);
         assertEquals(result.symptom(), "Cluster is close to reaching the configured maximum number of shards for data nodes.");
         assertThat(result.diagnosisList(), hasSize(1));
@@ -78,7 +72,7 @@ public class ShardsCapacityHealthIndicatorServiceIT extends ESIntegTestCase {
         // index: 13 shards + 1 replica = 26 shards used (30 - 26 < 5 available shards)
         createIndex(13, 1);
 
-        var result = fetchShardsCapacityIndicatorResult(internalCluster);
+        var result = fetchShardsCapacityIndicatorResult();
         assertEquals(result.status(), HealthStatus.RED);
         assertEquals(result.symptom(), "Cluster is close to reaching the configured maximum number of shards for data nodes.");
         assertThat(result.diagnosisList(), hasSize(1));
@@ -86,25 +80,21 @@ public class ShardsCapacityHealthIndicatorServiceIT extends ESIntegTestCase {
     }
 
     private void createIndex(int shards, int replicas) {
-        createIndex(INDEX_NAME, Settings.builder().put(SETTING_NUMBER_OF_SHARDS, shards).put(SETTING_NUMBER_OF_REPLICAS, replicas).build());
+        createIndex(INDEX_NAME, indexSettings(shards, replicas).build());
     }
 
-    private HealthIndicatorResult fetchShardsCapacityIndicatorResult(InternalTestCluster internalCluster) throws Exception {
-        var healthNode = ESIntegTestCase.waitAndGetHealthNode(internalCluster);
+    private HealthIndicatorResult fetchShardsCapacityIndicatorResult() throws Exception {
+        ensureStableCluster(internalCluster().getNodeNames().length);
+        var healthNode = ESIntegTestCase.waitAndGetHealthNode(internalCluster());
         assertNotNull(healthNode);
-        var healthNodeName = healthNode.getName();
-        var healthService = internalCluster.getInstance(HealthService.class, healthNodeName);
-        var healthIndicatorResults = getHealthServiceResults(healthService, healthNodeName);
+
+        var randomNode = internalCluster().getRandomNodeName();
+        waitForShardLimitsMetadata(randomNode);
+
+        var healthService = internalCluster().getInstance(HealthService.class, randomNode);
+        var healthIndicatorResults = getHealthServiceResults(healthService, randomNode);
         assertThat(healthIndicatorResults, hasSize(1));
         return healthIndicatorResults.get(0);
-    }
-
-    private void setUpCluster(InternalTestCluster internalCluster) throws Exception {
-        internalCluster.startMasterOnlyNode();
-        internalCluster.startDataOnlyNode();
-        internalCluster.startNode(NodeRoles.onlyRole(DATA_FROZEN_NODE_ROLE));
-        ensureStableCluster(internalCluster.getNodeNames().length);
-        waitForHealthMetadata();
     }
 
     private List<HealthIndicatorResult> getHealthServiceResults(HealthService healthService, String node) throws Exception {
@@ -125,9 +115,9 @@ public class ShardsCapacityHealthIndicatorServiceIT extends ESIntegTestCase {
         return resultListReference.get();
     }
 
-    private void waitForHealthMetadata() throws Exception {
+    private void waitForShardLimitsMetadata(String node) throws Exception {
         assertBusy(() -> {
-            var healthMetadata = HealthMetadata.getFromClusterState(internalCluster().clusterService().state());
+            var healthMetadata = HealthMetadata.getFromClusterState(internalCluster().clusterService(node).state());
 
             assertNotNull(healthMetadata);
             assertNotNull(healthMetadata.getShardLimitsMetadata());

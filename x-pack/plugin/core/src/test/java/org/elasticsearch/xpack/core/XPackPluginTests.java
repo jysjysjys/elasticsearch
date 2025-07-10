@@ -6,13 +6,11 @@
  */
 package org.elasticsearch.xpack.core;
 
-import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.master.AcknowledgedResponse;
-import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.cluster.node.DiscoveryNode;
+import org.elasticsearch.cluster.node.DiscoveryNodeUtils;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.UUIDs;
@@ -20,6 +18,7 @@ import org.elasticsearch.common.component.Lifecycle;
 import org.elasticsearch.common.component.LifecycleListener;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.core.PathUtils;
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.env.Environment;
 import org.elasticsearch.license.ClusterStateLicenseService;
 import org.elasticsearch.license.License;
@@ -30,6 +29,7 @@ import org.elasticsearch.license.PostStartTrialResponse;
 import org.elasticsearch.license.PutLicenseRequest;
 import org.elasticsearch.license.internal.MutableLicenseService;
 import org.elasticsearch.plugins.ExtensiblePlugin;
+import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.protocol.xpack.license.PutLicenseResponse;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.threadpool.ThreadPool;
@@ -75,9 +75,6 @@ public class XPackPluginTests extends ESTestCase {
     public void testXPackInstalledAttrClash() throws Exception {
         Settings.Builder builder = Settings.builder();
         builder.put("node.attr." + XPackPlugin.XPACK_INSTALLED_NODE_ATTR, randomBoolean());
-        if (randomBoolean()) {
-            builder.put(Client.CLIENT_TYPE_SETTING_S.getKey(), "transport");
-        }
         XPackPlugin xpackPlugin = createXPackPlugin(builder.put("path.home", createTempDir()).build());
         IllegalArgumentException e = expectThrows(IllegalArgumentException.class, xpackPlugin::additionalSettings);
         assertThat(
@@ -105,9 +102,7 @@ public class XPackPluginTests extends ESTestCase {
                 attributes = Collections.emptyMap();
             }
 
-            discoveryNodes.add(
-                new DiscoveryNode("node_" + i, buildNewFakeTransportAddress(), attributes, Collections.emptySet(), Version.CURRENT)
-            );
+            discoveryNodes.add(DiscoveryNodeUtils.create("node_" + i, buildNewFakeTransportAddress(), attributes, Collections.emptySet()));
         }
         ClusterState.Builder clusterStateBuilder = ClusterState.builder(ClusterName.DEFAULT);
 
@@ -148,23 +143,13 @@ public class XPackPluginTests extends ESTestCase {
 
         Environment mockEnvironment = mock(Environment.class);
         when(mockEnvironment.settings()).thenReturn(Settings.builder().build());
-        when(mockEnvironment.configFile()).thenReturn(PathUtils.get(""));
+        when(mockEnvironment.configDir()).thenReturn(PathUtils.get(""));
         // ensure createComponents does not influence the results
-        xpackPlugin.createComponents(
-            null,
-            mock(ClusterService.class),
-            mock(ThreadPool.class),
-            null,
-            null,
-            null,
-            mockEnvironment,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null
-        );
+        Plugin.PluginServices services = mock(Plugin.PluginServices.class);
+        when(services.clusterService()).thenReturn(mock(ClusterService.class));
+        when(services.threadPool()).thenReturn(mock(ThreadPool.class));
+        when(services.environment()).thenReturn(mockEnvironment);
+        xpackPlugin.createComponents(services);
         assertEquals(license, XPackPlugin.getSharedLicenseService().getLicense());
         assertEquals(License.OperationMode.resolve(licenseType), XPackPlugin.getSharedLicenseState().getOperationMode());
     }
@@ -202,22 +187,12 @@ public class XPackPluginTests extends ESTestCase {
         });
         Environment mockEnvironment = mock(Environment.class);
         when(mockEnvironment.settings()).thenReturn(Settings.builder().build());
-        when(mockEnvironment.configFile()).thenReturn(PathUtils.get(""));
-        xpackPlugin.createComponents(
-            null,
-            mock(ClusterService.class),
-            mock(ThreadPool.class),
-            null,
-            null,
-            null,
-            mockEnvironment,
-            null,
-            null,
-            null,
-            null,
-            null,
-            null
-        );
+        when(mockEnvironment.configDir()).thenReturn(PathUtils.get(""));
+        Plugin.PluginServices services = mock(Plugin.PluginServices.class);
+        when(services.clusterService()).thenReturn(mock(ClusterService.class));
+        when(services.threadPool()).thenReturn(mock(ThreadPool.class));
+        when(services.environment()).thenReturn(mockEnvironment);
+        xpackPlugin.createComponents(services);
         assertThat(XPackPlugin.getSharedLicenseService(), instanceOf(ClusterStateLicenseService.class));
         assertEquals(License.OperationMode.TRIAL, XPackPlugin.getSharedLicenseState().getOperationMode());
     }
@@ -237,7 +212,11 @@ public class XPackPluginTests extends ESTestCase {
         public void registerLicense(PutLicenseRequest request, ActionListener<PutLicenseResponse> listener) {}
 
         @Override
-        public void removeLicense(ActionListener<? extends AcknowledgedResponse> listener) {}
+        public void removeLicense(
+            TimeValue masterNodeTimeout,
+            TimeValue ackTimeout,
+            ActionListener<? extends AcknowledgedResponse> listener
+        ) {}
 
         @Override
         public void startBasicLicense(PostStartBasicRequest request, ActionListener<PostStartBasicResponse> listener) {}

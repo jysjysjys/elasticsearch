@@ -6,11 +6,11 @@
  */
 package org.elasticsearch.xpack.monitoring.collector.node;
 
-import org.elasticsearch.Version;
 import org.elasticsearch.action.admin.cluster.node.stats.NodeStats;
 import org.elasticsearch.action.admin.indices.stats.CommonStats;
 import org.elasticsearch.action.admin.indices.stats.CommonStatsFlags;
 import org.elasticsearch.cluster.node.DiscoveryNode;
+import org.elasticsearch.cluster.node.DiscoveryNodeUtils;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.transport.TransportAddress;
 import org.elasticsearch.common.xcontent.XContentHelper;
@@ -37,9 +37,11 @@ import org.elasticsearch.xpack.monitoring.exporter.BaseFilteredMonitoringDocTest
 import org.junit.Before;
 
 import java.io.IOException;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static java.util.Collections.emptyList;
@@ -226,7 +228,7 @@ public class NodeStatsMonitoringDocTests extends BaseFilteredMonitoringDocTestCa
                       "stat": {
                         "number_of_elapsed_periods": 39,
                         "number_of_times_throttled": 40,
-                        "time_throttled_nanos": 41
+                        "time_throttled_nanos": 9223372036854775848
                       }
                     },
                     "memory": {
@@ -329,7 +331,8 @@ public class NodeStatsMonitoringDocTests extends BaseFilteredMonitoringDocTestCa
         // Indices
         final CommonStats indicesCommonStats = new CommonStats(CommonStatsFlags.ALL);
         indicesCommonStats.getDocs().add(new DocsStats(++iota, no, randomNonNegativeLong()));
-        indicesCommonStats.getFieldData().add(new FieldDataStats(++iota, ++iota, null));
+        indicesCommonStats.getFieldData()
+            .add(new FieldDataStats(++iota, ++iota, null, new FieldDataStats.GlobalOrdinalsStats(0L, Map.of())));
         indicesCommonStats.getStore().add(new StoreStats(++iota, no, no));
 
         final IndexingStats.Stats indexingStats = new IndexingStats.Stats(
@@ -341,8 +344,12 @@ public class NodeStatsMonitoringDocTests extends BaseFilteredMonitoringDocTestCa
             no,
             no,
             no,
+            no,
             false,
             ++iota,
+            no,
+            no,
+            no,
             no,
             no
         );
@@ -350,7 +357,23 @@ public class NodeStatsMonitoringDocTests extends BaseFilteredMonitoringDocTestCa
         indicesCommonStats.getQueryCache().add(new QueryCacheStats(++iota, ++iota, ++iota, ++iota, no));
         indicesCommonStats.getRequestCache().add(new RequestCacheStats(++iota, ++iota, ++iota, ++iota));
 
-        final SearchStats.Stats searchStats = new SearchStats.Stats(++iota, ++iota, no, no, no, no, no, no, no, no, no, no);
+        final SearchStats.Stats searchStats = new SearchStats.Stats(
+            ++iota,
+            ++iota,
+            no,
+            no,
+            no,
+            no,
+            no,
+            no,
+            no,
+            no,
+            no,
+            no,
+            no,
+            no,
+            Double.valueOf(no)
+        );
         indicesCommonStats.getSearch().add(new SearchStats(searchStats, no, null));
 
         final SegmentsStats segmentsStats = new SegmentsStats();
@@ -360,7 +383,7 @@ public class NodeStatsMonitoringDocTests extends BaseFilteredMonitoringDocTestCa
         segmentsStats.addBitsetMemoryInBytes(++iota);
         indicesCommonStats.getSegments().add(segmentsStats);
 
-        final NodeIndicesStats indices = new NodeIndicesStats(indicesCommonStats, emptyMap(), emptyMap());
+        final NodeIndicesStats indices = new NodeIndicesStats(indicesCommonStats, emptyMap(), emptyMap(), emptyMap(), randomBoolean());
 
         // Filesystem
         final FsInfo.DeviceStats ioStatsOne = new FsInfo.DeviceStats(
@@ -391,10 +414,14 @@ public class NodeStatsMonitoringDocTests extends BaseFilteredMonitoringDocTestCa
 
         // Os
         final OsStats.Cpu osCpu = new OsStats.Cpu((short) no, new double[] { ++iota, ++iota, ++iota });
-        final OsStats.Cgroup.CpuStat osCpuStat = new OsStats.Cgroup.CpuStat(++iota, ++iota, ++iota);
+        final OsStats.Cgroup.CpuStat osCpuStat = new OsStats.Cgroup.CpuStat(
+            BigInteger.valueOf(++iota),
+            BigInteger.valueOf(++iota),
+            BigInteger.valueOf(Long.MAX_VALUE).add(BigInteger.valueOf(++iota))
+        );
         final OsStats.Cgroup osCgroup = new OsStats.Cgroup(
             "_cpu_acct_ctrl_group",
-            ++iota,
+            BigInteger.valueOf(++iota),
             "_cpu_ctrl_group",
             ++iota,
             ++iota,
@@ -433,17 +460,12 @@ public class NodeStatsMonitoringDocTests extends BaseFilteredMonitoringDocTestCa
         threadpools.add(new ThreadPoolStats.Stats("write", (int) ++iota, (int) ++iota, (int) no, ++iota, (int) no, no));
         final ThreadPoolStats threadPool = new ThreadPoolStats(threadpools);
 
-        final DiscoveryNode discoveryNode = new DiscoveryNode(
-            "_node_name",
-            "_node_id",
-            "_ephemeral_id",
-            "_host_name",
-            "_host_address",
-            new TransportAddress(TransportAddress.META_ADDRESS, 1234),
-            emptyMap(),
-            emptySet(),
-            Version.CURRENT
-        );
+        final DiscoveryNode discoveryNode = DiscoveryNodeUtils.builder("_node_id")
+            .name("_node_name")
+            .ephemeralId("_ephemeral_id")
+            .address("_host_name", "_host_address", new TransportAddress(TransportAddress.META_ADDRESS, 1234))
+            .roles(emptySet())
+            .build();
 
         return new NodeStats(
             discoveryNode,
@@ -454,6 +476,8 @@ public class NodeStatsMonitoringDocTests extends BaseFilteredMonitoringDocTestCa
             jvm,
             threadPool,
             fs,
+            null,
+            null,
             null,
             null,
             null,

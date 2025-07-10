@@ -1,15 +1,17 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License
- * 2.0 and the Server Side Public License, v 1; you may not use this file except
- * in compliance with, at your election, the Elastic License 2.0 or the Server
- * Side Public License, v 1.
+ * or more contributor license agreements. Licensed under the "Elastic License
+ * 2.0", the "GNU Affero General Public License v3.0 only", and the "Server Side
+ * Public License v 1"; you may not use this file except in compliance with, at
+ * your election, the "Elastic License 2.0", the "GNU Affero General Public
+ * License v3.0 only", or the "Server Side Public License, v 1".
  */
 package org.elasticsearch.ingest.geoip;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.logging.log4j.util.Supplier;
+import org.elasticsearch.cluster.metadata.ProjectId;
+import org.elasticsearch.core.FixForMultiProject;
 import org.elasticsearch.env.Environment;
 import org.elasticsearch.watcher.FileChangesListener;
 import org.elasticsearch.watcher.FileWatcher;
@@ -34,7 +36,7 @@ import java.util.stream.Stream;
  */
 final class ConfigDatabases implements Closeable {
 
-    private static final Logger LOGGER = LogManager.getLogger(ConfigDatabases.class);
+    private static final Logger logger = LogManager.getLogger(ConfigDatabases.class);
 
     private final GeoIpCache cache;
     private final Path geoipConfigDir;
@@ -42,7 +44,7 @@ final class ConfigDatabases implements Closeable {
     private final ConcurrentMap<String, DatabaseReaderLazyLoader> configDatabases;
 
     ConfigDatabases(Environment environment, GeoIpCache cache) {
-        this(environment.configFile().resolve("ingest-geoip"), cache);
+        this(environment.configDir().resolve("ingest-geoip"), cache);
     }
 
     ConfigDatabases(Path geoipConfigDir, GeoIpCache cache) {
@@ -58,7 +60,7 @@ final class ConfigDatabases implements Closeable {
         watcher.addListener(new GeoipDirectoryListener());
         resourceWatcher.add(watcher, ResourceWatcherService.Frequency.HIGH);
 
-        LOGGER.debug("initialized config databases [{}] and watching [{}] for changes", configDatabases.keySet(), geoipConfigDir);
+        logger.debug("initialized config databases [{}] and watching [{}] for changes", configDatabases.keySet(), geoipConfigDir);
     }
 
     DatabaseReaderLazyLoader getDatabase(String name) {
@@ -69,27 +71,29 @@ final class ConfigDatabases implements Closeable {
         return configDatabases;
     }
 
+    @FixForMultiProject(description = "Replace DEFAULT project")
     void updateDatabase(Path file, boolean update) {
         String databaseFileName = file.getFileName().toString();
         try {
             if (update) {
-                LOGGER.info("database file changed [{}], reload database...", file);
-                DatabaseReaderLazyLoader loader = new DatabaseReaderLazyLoader(cache, file, null);
+                logger.info("database file changed [{}], reloading database...", file);
+                DatabaseReaderLazyLoader loader = new DatabaseReaderLazyLoader(ProjectId.DEFAULT, cache, file, null);
                 DatabaseReaderLazyLoader existing = configDatabases.put(databaseFileName, loader);
                 if (existing != null) {
-                    existing.close();
+                    existing.shutdown();
                 }
             } else {
-                LOGGER.info("database file removed [{}], close database...", file);
+                logger.info("database file removed [{}], closing database...", file);
                 DatabaseReaderLazyLoader existing = configDatabases.remove(databaseFileName);
                 assert existing != null;
-                existing.close();
+                existing.shutdown();
             }
         } catch (Exception e) {
-            LOGGER.error((Supplier<?>) () -> "failed to update database [" + databaseFileName + "]", e);
+            logger.error(() -> "failed to update database [" + databaseFileName + "]", e);
         }
     }
 
+    @FixForMultiProject(description = "Replace DEFAULT project")
     Map<String, DatabaseReaderLazyLoader> initConfigDatabases() throws IOException {
         Map<String, DatabaseReaderLazyLoader> databases = new HashMap<>();
 
@@ -103,7 +107,7 @@ final class ConfigDatabases implements Closeable {
                     if (Files.isRegularFile(databasePath) && pathMatcher.matches(databasePath)) {
                         assert Files.exists(databasePath);
                         String databaseFileName = databasePath.getFileName().toString();
-                        DatabaseReaderLazyLoader loader = new DatabaseReaderLazyLoader(cache, databasePath, null);
+                        DatabaseReaderLazyLoader loader = new DatabaseReaderLazyLoader(ProjectId.DEFAULT, cache, databasePath, null);
                         databases.put(databaseFileName, loader);
                     }
                 }
@@ -116,7 +120,7 @@ final class ConfigDatabases implements Closeable {
     @Override
     public void close() throws IOException {
         for (DatabaseReaderLazyLoader lazyLoader : configDatabases.values()) {
-            lazyLoader.close();
+            lazyLoader.shutdown();
         }
     }
 

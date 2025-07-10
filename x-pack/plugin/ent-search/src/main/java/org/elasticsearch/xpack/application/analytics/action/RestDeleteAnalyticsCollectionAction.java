@@ -8,17 +8,32 @@
 package org.elasticsearch.xpack.application.analytics.action;
 
 import org.elasticsearch.client.internal.node.NodeClient;
-import org.elasticsearch.rest.BaseRestHandler;
+import org.elasticsearch.core.UpdateForV10;
+import org.elasticsearch.license.XPackLicenseState;
 import org.elasticsearch.rest.RestRequest;
+import org.elasticsearch.rest.RestUtils;
+import org.elasticsearch.rest.Scope;
+import org.elasticsearch.rest.ServerlessScope;
 import org.elasticsearch.rest.action.RestToXContentListener;
 import org.elasticsearch.xpack.application.EnterpriseSearch;
+import org.elasticsearch.xpack.application.EnterpriseSearchBaseRestHandler;
+import org.elasticsearch.xpack.application.utils.LicenseUtils;
 
 import java.io.IOException;
 import java.util.List;
 
 import static org.elasticsearch.rest.RestRequest.Method.DELETE;
 
-public class RestDeleteAnalyticsCollectionAction extends BaseRestHandler {
+/**
+ * @deprecated in 9.0
+ */
+@Deprecated
+@UpdateForV10(owner = UpdateForV10.Owner.ENTERPRISE_SEARCH)
+@ServerlessScope(Scope.PUBLIC)
+public class RestDeleteAnalyticsCollectionAction extends EnterpriseSearchBaseRestHandler {
+    public RestDeleteAnalyticsCollectionAction(XPackLicenseState licenseState) {
+        super(licenseState, LicenseUtils.Product.BEHAVIORAL_ANALYTICS);
+    }
 
     @Override
     public String getName() {
@@ -31,8 +46,11 @@ public class RestDeleteAnalyticsCollectionAction extends BaseRestHandler {
     }
 
     @Override
-    protected RestChannelConsumer prepareRequest(RestRequest restRequest, NodeClient client) throws IOException {
-        DeleteAnalyticsCollectionAction.Request request = new DeleteAnalyticsCollectionAction.Request(restRequest.param("collection_name"));
+    protected RestChannelConsumer innerPrepareRequest(RestRequest restRequest, NodeClient client) throws IOException {
+        DeleteAnalyticsCollectionAction.Request request = new DeleteAnalyticsCollectionAction.Request(
+            RestUtils.getMasterNodeTimeout(restRequest),
+            restRequest.param("collection_name")
+        );
         return channel -> client.execute(DeleteAnalyticsCollectionAction.INSTANCE, request, new RestToXContentListener<>(channel));
     }
 }

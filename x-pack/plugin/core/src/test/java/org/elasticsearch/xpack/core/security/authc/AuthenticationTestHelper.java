@@ -15,6 +15,7 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.test.XContentTestUtils;
 import org.elasticsearch.xcontent.XContentType;
+import org.elasticsearch.xpack.core.security.action.apikey.ApiKey;
 import org.elasticsearch.xpack.core.security.action.service.TokenInfo;
 import org.elasticsearch.xpack.core.security.authc.Authentication.AuthenticationType;
 import org.elasticsearch.xpack.core.security.authc.esnative.NativeRealmSettings;
@@ -24,24 +25,22 @@ import org.elasticsearch.xpack.core.security.authc.kerberos.KerberosRealmSetting
 import org.elasticsearch.xpack.core.security.authc.ldap.LdapRealmSettings;
 import org.elasticsearch.xpack.core.security.authc.oidc.OpenIdConnectRealmSettings;
 import org.elasticsearch.xpack.core.security.authc.pki.PkiRealmSettings;
-import org.elasticsearch.xpack.core.security.authc.saml.SamlRealmSettings;
+import org.elasticsearch.xpack.core.security.authc.saml.SingleSpSamlRealmSettings;
 import org.elasticsearch.xpack.core.security.authc.service.ServiceAccountSettings;
 import org.elasticsearch.xpack.core.security.authz.RoleDescriptor;
 import org.elasticsearch.xpack.core.security.authz.RoleDescriptorsIntersection;
 import org.elasticsearch.xpack.core.security.user.AnonymousUser;
-import org.elasticsearch.xpack.core.security.user.AsyncSearchUser;
-import org.elasticsearch.xpack.core.security.user.CrossClusterAccessUser;
-import org.elasticsearch.xpack.core.security.user.SecurityProfileUser;
+import org.elasticsearch.xpack.core.security.user.InternalUser;
+import org.elasticsearch.xpack.core.security.user.InternalUsers;
 import org.elasticsearch.xpack.core.security.user.SystemUser;
 import org.elasticsearch.xpack.core.security.user.User;
 import org.elasticsearch.xpack.core.security.user.UsernamesField;
-import org.elasticsearch.xpack.core.security.user.XPackSecurityUser;
-import org.elasticsearch.xpack.core.security.user.XPackUser;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -77,14 +76,10 @@ public class AuthenticationTestHelper {
         AuthenticationField.CROSS_CLUSTER_ACCESS_REALM_TYPE
     );
 
-    private static final Set<User> INTERNAL_USERS = Set.of(
-        SystemUser.INSTANCE,
-        XPackUser.INSTANCE,
-        XPackSecurityUser.INSTANCE,
-        AsyncSearchUser.INSTANCE,
-        SecurityProfileUser.INSTANCE,
-        CrossClusterAccessUser.INSTANCE
-    );
+    private static final List<InternalUser> INTERNAL_USERS_WITH_ROLE_DESCRIPTOR = InternalUsers.get()
+        .stream()
+        .filter(u -> u.getLocalClusterRoleDescriptor().isPresent())
+        .toList();
 
     public static AuthenticationTestBuilder builder() {
         return new AuthenticationTestBuilder();
@@ -97,8 +92,37 @@ public class AuthenticationTestHelper {
         );
     }
 
-    public static User randomInternalUser() {
-        return ESTestCase.randomFrom(INTERNAL_USERS);
+    public static User randomCloudApiKeyUser() {
+        return randomCloudApiKeyUser(null);
+    }
+
+    public static User randomCloudApiKeyUser(String principal) {
+        final Map<String, Object> metadata = ESTestCase.randomBoolean()
+            ? null
+            : Map.ofEntries(
+                Map.entry(AuthenticationField.API_KEY_NAME_KEY, ESTestCase.randomAlphanumericOfLength(64)),
+                Map.entry(AuthenticationField.API_KEY_INTERNAL_KEY, ESTestCase.randomBoolean())
+            );
+        return new User(
+            principal == null ? ESTestCase.randomAlphanumericOfLength(64) : principal,
+            ESTestCase.randomArray(1, 3, String[]::new, () -> "role_" + ESTestCase.randomAlphaOfLengthBetween(3, 8)),
+            null,
+            null,
+            metadata,
+            true
+        );
+    }
+
+    public static InternalUser randomInternalUser() {
+        return ESTestCase.randomFrom(InternalUsers.get());
+    }
+
+    public static Collection<InternalUser> internalUsersWithLocalRoleDescriptor() {
+        return INTERNAL_USERS_WITH_ROLE_DESCRIPTOR;
+    }
+
+    public static InternalUser randomInternalUserWithLocalRoleDescriptor() {
+        return ESTestCase.randomFrom(INTERNAL_USERS_WITH_ROLE_DESCRIPTOR);
     }
 
     public static User userWithRandomMetadataAndDetails(final String username, final String... roles) {
@@ -190,7 +214,7 @@ public class AuthenticationTestHelper {
             LdapRealmSettings.LDAP_TYPE,
             JwtRealmSettings.TYPE,
             OpenIdConnectRealmSettings.TYPE,
-            SamlRealmSettings.TYPE,
+            SingleSpSamlRealmSettings.TYPE,
             KerberosRealmSettings.TYPE,
             PkiRealmSettings.TYPE,
             ESTestCase.randomAlphaOfLengthBetween(3, 8)
@@ -227,7 +251,7 @@ public class AuthenticationTestHelper {
      * @return non-empty collection of internal usernames
      */
     public static List<String> randomInternalUsernames() {
-        return ESTestCase.randomNonEmptySubsetOf(INTERNAL_USERS.stream().map(User::principal).toList());
+        return ESTestCase.randomNonEmptySubsetOf(InternalUsers.get().stream().map(User::principal).toList());
     }
 
     public static String randomInternalRoleName() {
@@ -237,8 +261,37 @@ public class AuthenticationTestHelper {
             UsernamesField.ASYNC_SEARCH_ROLE,
             UsernamesField.XPACK_SECURITY_ROLE,
             UsernamesField.SECURITY_PROFILE_ROLE,
-            UsernamesField.CROSS_CLUSTER_ACCESS_ROLE
+            UsernamesField.DATA_STREAM_LIFECYCLE_ROLE
         );
+    }
+
+    public static Authentication randomCloudApiKeyAuthentication() {
+        return randomCloudApiKeyAuthentication(null, null);
+    }
+
+    public static Authentication randomCloudApiKeyAuthentication(String apiKeyId) {
+        return randomCloudApiKeyAuthentication(null, apiKeyId);
+    }
+
+    public static Authentication randomCloudApiKeyAuthentication(User user) {
+        return randomCloudApiKeyAuthentication(user, null);
+    }
+
+    public static Authentication randomCloudApiKeyAuthentication(User user, String apiKeyId) {
+        if (apiKeyId == null) {
+            apiKeyId = user != null ? user.principal() : ESTestCase.randomAlphanumericOfLength(64);
+        }
+        if (user == null) {
+            user = randomCloudApiKeyUser(apiKeyId);
+        }
+
+        assert user.principal().equals(apiKeyId) : "user principal must match cloud API key ID";
+
+        return Authentication.newCloudApiKeyAuthentication(
+            AuthenticationResult.success(user, user.metadata()),
+            "node_" + ESTestCase.randomAlphaOfLengthBetween(3, 8)
+        );
+
     }
 
     public static CrossClusterAccessSubjectInfo randomCrossClusterAccessSubjectInfo(
@@ -253,8 +306,8 @@ public class AuthenticationTestHelper {
     }
 
     public static CrossClusterAccessSubjectInfo crossClusterAccessSubjectInfoForInternalUser() {
-        final Authentication authentication = AuthenticationTestHelper.builder().internal(CrossClusterAccessUser.INSTANCE).build();
-        return CrossClusterAccessUser.subjectInfo(
+        final Authentication authentication = AuthenticationTestHelper.builder().internal(InternalUsers.SYSTEM_USER).build();
+        return SystemUser.crossClusterAccessSubjectInfo(
             authentication.getEffectiveSubject().getTransportVersion(),
             authentication.getEffectiveSubject().getRealm().getNodeName()
         );
@@ -269,7 +322,7 @@ public class AuthenticationTestHelper {
         return switch (type) {
             case "realm" -> AuthenticationTestHelper.builder().realm().build();
             case "apikey" -> AuthenticationTestHelper.builder().apiKey().build();
-            case "internal" -> AuthenticationTestHelper.builder().internal(CrossClusterAccessUser.INSTANCE).build();
+            case "internal" -> AuthenticationTestHelper.builder().internal(InternalUsers.SYSTEM_USER).build();
             case "service_account" -> AuthenticationTestHelper.builder().serviceAccount().build();
             default -> throw new UnsupportedOperationException("unknown type " + type);
         };
@@ -285,7 +338,7 @@ public class AuthenticationTestHelper {
     }
 
     public static CrossClusterAccessSubjectInfo randomCrossClusterAccessSubjectInfo(final Authentication authentication) {
-        if (CrossClusterAccessUser.is(authentication.getEffectiveSubject().getUser())) {
+        if (InternalUsers.SYSTEM_USER == authentication.getEffectiveSubject().getUser()) {
             return crossClusterAccessSubjectInfoForInternalUser();
         }
         final int numberOfRoleDescriptors;
@@ -304,6 +357,9 @@ public class AuthenticationTestHelper {
                         null,
                         new RoleDescriptor.IndicesPrivileges[] {
                             RoleDescriptor.IndicesPrivileges.builder().indices("index1").privileges("read", "read_cross_cluster").build() },
+                        null,
+                        null,
+                        null,
                         null,
                         null,
                         null,
@@ -381,6 +437,25 @@ public class AuthenticationTestHelper {
             realmRef = null;
             candidateAuthenticationTypes = EnumSet.of(AuthenticationType.API_KEY);
             metadata.put(AuthenticationField.API_KEY_ID_KEY, Objects.requireNonNull(apiKeyId));
+            metadata.put(AuthenticationField.API_KEY_TYPE_KEY, ApiKey.Type.REST.value());
+            return this;
+        }
+
+        public AuthenticationTestBuilder crossClusterApiKey(String apiKeyId) {
+            apiKey(apiKeyId);
+            candidateAuthenticationTypes = EnumSet.of(AuthenticationType.API_KEY);
+            metadata.put(AuthenticationField.API_KEY_TYPE_KEY, ApiKey.Type.CROSS_CLUSTER.value());
+            metadata.put(AuthenticationField.API_KEY_ROLE_DESCRIPTORS_KEY, new BytesArray("""
+                {
+                  "cross_cluster": {
+                    "cluster": ["cross_cluster_search", "cross_cluster_replication"],
+                    "indices": [
+                      { "names":["logs*"], "privileges":["read","read_cross_cluster","view_index_metadata"] },
+                      { "names":["archive*"],"privileges":["cross_cluster_replication","cross_cluster_replication_internal"] }
+                    ]
+                  }
+                }"""));
+            metadata.put(AuthenticationField.API_KEY_LIMITED_ROLE_DESCRIPTORS_KEY, new BytesArray("{}"));
             return this;
         }
 
@@ -399,12 +474,12 @@ public class AuthenticationTestHelper {
         }
 
         public AuthenticationTestBuilder internal() {
-            return internal(ESTestCase.randomFrom(INTERNAL_USERS));
+            return internal(ESTestCase.randomFrom(InternalUsers.get()));
         }
 
-        public AuthenticationTestBuilder internal(User user) {
+        public AuthenticationTestBuilder internal(InternalUser user) {
             assert authenticatingAuthentication == null : "shortcut method cannot be used for effective authentication";
-            assert User.isInternal(user) : "user must be internal for internal authentication";
+            assert user instanceof InternalUser : "user must be internal for internal authentication";
             resetShortcutRelatedVariables();
             this.user = user;
             realmRef = null;
@@ -413,8 +488,8 @@ public class AuthenticationTestHelper {
         }
 
         public AuthenticationTestBuilder user(User user) {
-            if (User.isInternal(user)) {
-                return internal(user);
+            if (user instanceof InternalUser internalUser) {
+                return internal(internalUser);
             } else if (user instanceof AnonymousUser) {
                 return anonymous(user);
             } else {
@@ -435,7 +510,7 @@ public class AuthenticationTestHelper {
             if (authenticatingAuthentication != null) {
                 throw new IllegalArgumentException("cannot use cross cluster access authentication as run-as target");
             }
-            apiKey(crossClusterAccessApiKeyId);
+            crossClusterApiKey(crossClusterAccessApiKeyId);
             this.crossClusterAccessSubjectInfo = Objects.requireNonNull(crossClusterAccessSubjectInfo);
             return this;
         }
@@ -495,7 +570,7 @@ public class AuthenticationTestHelper {
                 if (user == null) {
                     user = randomUser();
                 }
-                assert false == User.isInternal(user) && false == user instanceof AnonymousUser
+                assert false == user instanceof InternalUser && false == user instanceof AnonymousUser
                     : "cannot run-as internal or anonymous user";
                 if (realmRef == null) {
                     realmRef = randomRealmRef(isRealmUnderDomain == null ? ESTestCase.randomBoolean() : isRealmUnderDomain);
@@ -606,24 +681,41 @@ public class AuthenticationTestHelper {
                     }
                     case INTERNAL -> {
                         if (user == null) {
-                            user = ESTestCase.randomFrom(INTERNAL_USERS);
+                            user = ESTestCase.randomFrom(InternalUsers.get());
                         }
-                        assert User.isInternal(user) : "user must be internal for internal authentication";
-                        assert realmRef == null : "cannot specify realm type for internal authentication";
-                        String nodeName = ESTestCase.randomAlphaOfLengthBetween(3, 8);
-                        if (user == SystemUser.INSTANCE) {
-                            authentication = ESTestCase.randomFrom(
-                                Authentication.newInternalAuthentication(user, TransportVersion.CURRENT, nodeName),
-                                Authentication.newInternalFallbackAuthentication(user, nodeName)
-                            );
+                        if (user instanceof InternalUser internalUser) {
+                            assert realmRef == null : "cannot specify realm type for internal authentication";
+                            String nodeName = ESTestCase.randomAlphaOfLengthBetween(3, 8);
+                            if (internalUser == InternalUsers.SYSTEM_USER) {
+                                authentication = ESTestCase.randomFrom(
+                                    Authentication.newInternalAuthentication(internalUser, TransportVersion.current(), nodeName),
+                                    Authentication.newInternalFallbackAuthentication(user, nodeName)
+                                );
+                            } else {
+                                authentication = Authentication.newInternalAuthentication(
+                                    internalUser,
+                                    TransportVersion.current(),
+                                    nodeName
+                                );
+                            }
                         } else {
-                            authentication = Authentication.newInternalAuthentication(user, TransportVersion.CURRENT, nodeName);
+                            throw new IllegalArgumentException(
+                                "Cannot have authentication type ["
+                                    + authenticationType
+                                    + "] ("
+                                    + candidateAuthenticationTypes
+                                    + ") with non-internal user ["
+                                    + user
+                                    + "] ("
+                                    + user.getClass().getName()
+                                    + ")"
+                            );
                         }
                     }
                     default -> throw new IllegalArgumentException("unknown authentication type [" + authenticationType + "]");
                 }
                 if (transportVersion == null) {
-                    transportVersion = TransportVersion.CURRENT;
+                    transportVersion = TransportVersion.current();
                 }
                 if (transportVersion.before(authentication.getEffectiveSubject().getTransportVersion())) {
                     return authentication.maybeRewriteForOlderVersion(transportVersion);

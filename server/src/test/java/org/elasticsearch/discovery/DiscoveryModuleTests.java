@@ -1,29 +1,37 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License
- * 2.0 and the Server Side Public License, v 1; you may not use this file except
- * in compliance with, at your election, the Elastic License 2.0 or the Server
- * Side Public License, v 1.
+ * or more contributor license agreements. Licensed under the "Elastic License
+ * 2.0", the "GNU Affero General Public License v3.0 only", and the "Server Side
+ * Public License v 1"; you may not use this file except in compliance with, at
+ * your election, the "Elastic License 2.0", the "GNU Affero General Public
+ * License v3.0 only", or the "Server Side Public License, v 1".
  */
 package org.elasticsearch.discovery;
 
 import org.elasticsearch.TransportVersion;
-import org.elasticsearch.Version;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.coordination.Coordinator;
+import org.elasticsearch.cluster.coordination.LeaderHeartbeatService;
+import org.elasticsearch.cluster.coordination.PreVoteCollector;
+import org.elasticsearch.cluster.coordination.Reconfigurator;
+import org.elasticsearch.cluster.coordination.StatefulPreVoteCollector;
 import org.elasticsearch.cluster.node.DiscoveryNode;
+import org.elasticsearch.cluster.node.VersionInformation;
 import org.elasticsearch.cluster.routing.RerouteService;
 import org.elasticsearch.cluster.service.ClusterApplier;
 import org.elasticsearch.cluster.service.MasterService;
+import org.elasticsearch.cluster.version.CompatibilityVersionsUtils;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.network.NetworkService;
 import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.core.IOUtils;
+import org.elasticsearch.features.FeatureService;
 import org.elasticsearch.gateway.GatewayMetaState;
 import org.elasticsearch.indices.breaker.NoneCircuitBreakerService;
 import org.elasticsearch.plugins.ClusterCoordinationPlugin;
 import org.elasticsearch.plugins.DiscoveryPlugin;
+import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.test.transport.MockTransportService;
 import org.elasticsearch.threadpool.ThreadPool;
@@ -36,10 +44,13 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.is;
 import static org.mockito.Mockito.mock;
 
 public class DiscoveryModuleTests extends ESTestCase {
@@ -67,8 +78,8 @@ public class DiscoveryModuleTests extends ESTestCase {
     public void setupDummyServices() {
         transportService = MockTransportService.createNewService(
             Settings.EMPTY,
-            Version.CURRENT,
-            TransportVersion.CURRENT,
+            VersionInformation.CURRENT,
+            TransportVersion.current(),
             mock(ThreadPool.class),
             null
         );
@@ -105,7 +116,9 @@ public class DiscoveryModuleTests extends ESTestCase {
             gatewayMetaState,
             mock(RerouteService.class),
             null,
-            new NoneCircuitBreakerService()
+            new NoneCircuitBreakerService(),
+            CompatibilityVersionsUtils.staticCurrent(),
+            new FeatureService(List.of())
         );
     }
 
@@ -206,17 +219,120 @@ public class DiscoveryModuleTests extends ESTestCase {
         assertTrue(onJoinValidators.contains(consumer));
     }
 
-    public void testLegacyDiscoveryType() {
-        newModule(
-            Settings.builder()
-                .put(DiscoveryModule.DISCOVERY_TYPE_SETTING.getKey(), DiscoveryModule.LEGACY_MULTI_NODE_DISCOVERY_TYPE)
-                .build(),
-            List.of(),
-            List.of()
+    public void testRejectsMultipleReconfigurators() {
+        assertThat(
+            expectThrows(
+                IllegalStateException.class,
+                () -> DiscoveryModule.getReconfigurator(
+                    Settings.EMPTY,
+                    new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS),
+                    List.of(
+                        new BaseTestClusterCoordinationPlugin(),
+                        new TestClusterCoordinationPlugin1(),
+                        new TestClusterCoordinationPlugin2()
+                    )
+                )
+            ).getMessage(),
+            containsString("multiple reconfigurator factories found")
         );
-        assertCriticalWarnings(
-            "Support for setting [discovery.type] to [zen] is deprecated and will be removed in a future version. Set this setting to "
-                + "[multi-node] instead."
+
+        assertThat(
+            DiscoveryModule.getReconfigurator(
+                Settings.EMPTY,
+                new ClusterSettings(Settings.EMPTY, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS),
+                List.of(new BaseTestClusterCoordinationPlugin())
+            ),
+            is(BaseTestClusterCoordinationPlugin.reconfiguratorInstance)
         );
     }
+
+    public void testRejectsMultiplePreVoteCollectorFactories() {
+        assertThat(
+            expectThrows(
+                IllegalStateException.class,
+                () -> DiscoveryModule.getPreVoteCollectorFactory(
+                    List.of(new BaseTestClusterCoordinationPlugin(), new TestClusterCoordinationPlugin1() {
+                        @Override
+                        public Optional<ReconfiguratorFactory> getReconfiguratorFactory() {
+                            return Optional.empty();
+                        }
+                    }, new TestClusterCoordinationPlugin2() {
+                        @Override
+                        public Optional<ReconfiguratorFactory> getReconfiguratorFactory() {
+                            return Optional.empty();
+                        }
+                    })
+                )
+            ).getMessage(),
+            containsString("multiple pre-vote collector factories found")
+        );
+
+        assertThat(
+            DiscoveryModule.getPreVoteCollectorFactory(List.of(new BaseTestClusterCoordinationPlugin())),
+            is(BaseTestClusterCoordinationPlugin.preVoteCollectorFactory)
+        );
+    }
+
+    public void testRejectsMultipleLeaderHeartbeatServices() {
+        assertThat(
+            expectThrows(
+                IllegalStateException.class,
+                () -> DiscoveryModule.getLeaderHeartbeatService(
+                    Settings.EMPTY,
+                    List.of(new BaseTestClusterCoordinationPlugin(), new TestClusterCoordinationPlugin1() {
+                        @Override
+                        public Optional<ReconfiguratorFactory> getReconfiguratorFactory() {
+                            return Optional.empty();
+                        }
+
+                        @Override
+                        public Optional<PreVoteCollector.Factory> getPreVoteCollectorFactory() {
+                            return Optional.empty();
+                        }
+                    }, new TestClusterCoordinationPlugin2() {
+                        @Override
+                        public Optional<ReconfiguratorFactory> getReconfiguratorFactory() {
+                            return Optional.empty();
+                        }
+
+                        @Override
+                        public Optional<PreVoteCollector.Factory> getPreVoteCollectorFactory() {
+                            return Optional.empty();
+                        }
+                    })
+                )
+            ).getMessage(),
+            containsString("multiple leader heart beat service factories found")
+        );
+
+        assertThat(
+            DiscoveryModule.getLeaderHeartbeatService(Settings.EMPTY, List.of(new BaseTestClusterCoordinationPlugin())),
+            is(BaseTestClusterCoordinationPlugin.leaderHeartbeatServiceInstance)
+        );
+    }
+
+    private static class BaseTestClusterCoordinationPlugin extends Plugin implements ClusterCoordinationPlugin {
+        static Reconfigurator reconfiguratorInstance;
+        static PreVoteCollector.Factory preVoteCollectorFactory = StatefulPreVoteCollector::new;
+        static LeaderHeartbeatService leaderHeartbeatServiceInstance = LeaderHeartbeatService.NO_OP;
+
+        @Override
+        public Optional<ReconfiguratorFactory> getReconfiguratorFactory() {
+            return Optional.of((settings, clusterSettings) -> reconfiguratorInstance = new Reconfigurator(settings, clusterSettings));
+        }
+
+        @Override
+        public Optional<PreVoteCollector.Factory> getPreVoteCollectorFactory() {
+            return Optional.of(preVoteCollectorFactory);
+        }
+
+        @Override
+        public Optional<LeaderHeartbeatService> getLeaderHeartbeatService(Settings settings) {
+            return Optional.of(leaderHeartbeatServiceInstance);
+        }
+    }
+
+    public static class TestClusterCoordinationPlugin1 extends BaseTestClusterCoordinationPlugin {}
+
+    public static class TestClusterCoordinationPlugin2 extends BaseTestClusterCoordinationPlugin {}
 }

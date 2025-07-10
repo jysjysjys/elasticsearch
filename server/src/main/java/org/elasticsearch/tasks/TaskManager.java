@@ -1,9 +1,10 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License
- * 2.0 and the Server Side Public License, v 1; you may not use this file except
- * in compliance with, at your election, the Elastic License 2.0 or the Server
- * Side Public License, v 1.
+ * or more contributor license agreements. Licensed under the "Elastic License
+ * 2.0", the "GNU Affero General Public License v3.0 only", and the "Server Side
+ * Public License v 1"; you may not use this file except in compliance with, at
+ * your election, the "Elastic License 2.0", the "GNU Affero General Public
+ * License v3.0 only", or the "Server Side Public License, v 1".
  */
 
 package org.elasticsearch.tasks;
@@ -20,7 +21,7 @@ import org.elasticsearch.cluster.ClusterChangedEvent;
 import org.elasticsearch.cluster.ClusterStateApplier;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
-import org.elasticsearch.common.Strings;
+import org.elasticsearch.common.UUIDs;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.concurrent.AbstractRunnable;
@@ -30,8 +31,8 @@ import org.elasticsearch.core.Assertions;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
+import org.elasticsearch.telemetry.tracing.Tracer;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.elasticsearch.tracing.Tracer;
 import org.elasticsearch.transport.TaskTransportChannel;
 import org.elasticsearch.transport.TcpChannel;
 import org.elasticsearch.transport.TcpTransportChannel;
@@ -67,14 +68,12 @@ public class TaskManager implements ClusterStateApplier {
     private static final Logger logger = LogManager.getLogger(TaskManager.class);
 
     /** Rest headers that are copied to the task */
-    private final String[] taskHeaders;
+    private final Set<String> taskHeaders;
     private final ThreadPool threadPool;
 
     private final Map<Long, Task> tasks = ConcurrentCollections.newConcurrentMapWithAggressiveConcurrency();
 
-    private final CancellableTasksTracker<CancellableTaskHolder> cancellableTasks = new CancellableTasksTracker<>(
-        new CancellableTaskHolder[0]
-    );
+    private final CancellableTasksTracker<CancellableTaskHolder> cancellableTasks = new CancellableTasksTracker<>();
 
     private final AtomicLong taskIdGenerator = new AtomicLong();
 
@@ -82,6 +81,7 @@ public class TaskManager implements ClusterStateApplier {
 
     private TaskResultsService taskResultsService;
 
+    private final String nodeId;
     private DiscoveryNodes lastDiscoveryNodes = DiscoveryNodes.EMPTY_NODES;
 
     private final Tracer tracer;
@@ -97,11 +97,19 @@ public class TaskManager implements ClusterStateApplier {
         this(settings, threadPool, taskHeaders, Tracer.NOOP);
     }
 
+    // For testing (especially the creating a random node ID, which some tests rely on)
     public TaskManager(Settings settings, ThreadPool threadPool, Set<String> taskHeaders, Tracer tracer) {
+        this(settings, threadPool, taskHeaders, tracer, UUIDs.randomBase64UUID());
+    }
+
+    // TODO Both of the above overloads should be moved to the test package.
+
+    public TaskManager(Settings settings, ThreadPool threadPool, Set<String> taskHeaders, Tracer tracer, String nodeId) {
         this.threadPool = threadPool;
-        this.taskHeaders = taskHeaders.toArray(Strings.EMPTY_ARRAY);
+        this.taskHeaders = Set.copyOf(taskHeaders);
         this.maxHeaderSize = SETTING_HTTP_MAX_HEADER_SIZE.get(settings);
         this.tracer = tracer;
+        this.nodeId = nodeId;
     }
 
     public void setTaskResultsService(TaskResultsService taskResultsService) {
@@ -143,7 +151,13 @@ public class TaskManager implements ClusterStateApplier {
                 headers.put(key, httpHeader);
             }
         }
-        Task task = request.createTask(taskIdGenerator.incrementAndGet(), type, action, request.getParentTask(), headers);
+        Task task = request.createTask(
+            new TaskId(nodeId, taskIdGenerator.incrementAndGet()),
+            type,
+            action,
+            request.getParentTask(),
+            headers
+        );
         Objects.requireNonNull(task);
         assert task.getParentTaskId().equals(request.getParentTask()) : "Request [ " + request + "] didn't preserve it parentTaskId";
         if (logger.isTraceEnabled()) {
@@ -508,7 +522,7 @@ public class TaskManager implements ClusterStateApplier {
             if (channel instanceof TcpTransportChannel) {
                 startTrackingChannel(((TcpTransportChannel) channel).getChannel(), ban::registerChannel);
             } else {
-                assert channel.getChannelType().equals("direct") : "expect direct channel; got [" + channel + "]";
+                assert TransportService.isDirectResponseChannel(channel) : "expect direct channel; got [" + channel + "]";
                 ban.registerChannel(DIRECT_CHANNEL_TRACKER);
             }
         }
@@ -660,10 +674,6 @@ public class TaskManager implements ClusterStateApplier {
             ExceptionsHelper.reThrowIfNotNull(rootException);
         }
 
-        public boolean hasParent(TaskId parentTaskId) {
-            return task.getParentTaskId().equals(parentTaskId);
-        }
-
         public CancellableTask getTask() {
             return task;
         }
@@ -742,11 +752,11 @@ public class TaskManager implements ClusterStateApplier {
             return curr;
         });
         if (tracker.registered.compareAndSet(false, true)) {
-            channel.addCloseListener(ActionListener.wrap(r -> {
+            channel.addCloseListener(ActionListener.running(() -> {
                 final ChannelPendingTaskTracker removedTracker = channelPendingTaskTrackers.remove(channel);
                 assert removedTracker == tracker;
                 onChannelClosed(tracker);
-            }, e -> { assert false : new AssertionError("must not be here", e); }));
+            }));
         }
         return tracker;
     }
@@ -819,7 +829,7 @@ public class TaskManager implements ClusterStateApplier {
         getCancellationService().cancelTaskAndDescendants(task, reason, waitForCompletion, listener);
     }
 
-    public List<String> getTaskHeaders() {
-        return List.of(taskHeaders);
+    public Set<String> getTaskHeaders() {
+        return taskHeaders;
     }
 }

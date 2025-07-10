@@ -1,15 +1,15 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License
- * 2.0 and the Server Side Public License, v 1; you may not use this file except
- * in compliance with, at your election, the Elastic License 2.0 or the Server
- * Side Public License, v 1.
+ * or more contributor license agreements. Licensed under the "Elastic License
+ * 2.0", the "GNU Affero General Public License v3.0 only", and the "Server Side
+ * Public License v 1"; you may not use this file except in compliance with, at
+ * your election, the "Elastic License 2.0", the "GNU Affero General Public
+ * License v3.0 only", or the "Server Side Public License, v 1".
  */
 
 package org.elasticsearch.transport;
 
-import org.elasticsearch.TransportVersion;
-import org.elasticsearch.Version;
+import org.elasticsearch.TransportVersions;
 import org.elasticsearch.common.collect.Iterators;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -69,20 +69,19 @@ public class TransportStats implements Writeable, ChunkedToXContent {
         rxSize = in.readVLong();
         txCount = in.readVLong();
         txSize = in.readVLong();
-        if (in.getTransportVersion().onOrAfter(TransportVersion.V_8_1_0) && in.readBoolean()) {
-            inboundHandlingTimeBucketFrequencies = new long[HandlingTimeTracker.BUCKET_COUNT];
-            for (int i = 0; i < inboundHandlingTimeBucketFrequencies.length; i++) {
-                inboundHandlingTimeBucketFrequencies[i] = in.readVLong();
-            }
-            outboundHandlingTimeBucketFrequencies = new long[HandlingTimeTracker.BUCKET_COUNT];
-            for (int i = 0; i < inboundHandlingTimeBucketFrequencies.length; i++) {
-                outboundHandlingTimeBucketFrequencies[i] = in.readVLong();
-            }
-        } else {
-            inboundHandlingTimeBucketFrequencies = new long[0];
-            outboundHandlingTimeBucketFrequencies = new long[0];
+        if (in.getTransportVersion().before(TransportVersions.TRANSPORT_STATS_HANDLING_TIME_REQUIRED)
+            && in.getTransportVersion().isPatchFrom(TransportVersions.V_9_0_0) == false) {
+            in.readBoolean();
         }
-        if (in.getTransportVersion().onOrAfter(TransportVersion.V_8_8_0)) {
+        inboundHandlingTimeBucketFrequencies = new long[HandlingTimeTracker.BUCKET_COUNT];
+        for (int i = 0; i < inboundHandlingTimeBucketFrequencies.length; i++) {
+            inboundHandlingTimeBucketFrequencies[i] = in.readVLong();
+        }
+        outboundHandlingTimeBucketFrequencies = new long[HandlingTimeTracker.BUCKET_COUNT];
+        for (int i = 0; i < inboundHandlingTimeBucketFrequencies.length; i++) {
+            outboundHandlingTimeBucketFrequencies[i] = in.readVLong();
+        }
+        if (in.getTransportVersion().onOrAfter(TransportVersions.V_8_8_0)) {
             transportActionStats = Collections.unmodifiableMap(in.readOrderedMap(StreamInput::readString, TransportActionStats::new));
         } else {
             transportActionStats = Map.of();
@@ -98,18 +97,20 @@ public class TransportStats implements Writeable, ChunkedToXContent {
         out.writeVLong(rxSize);
         out.writeVLong(txCount);
         out.writeVLong(txSize);
-        if (out.getTransportVersion().onOrAfter(TransportVersion.V_8_1_0)) {
-            assert (inboundHandlingTimeBucketFrequencies.length > 0) == (outboundHandlingTimeBucketFrequencies.length > 0);
-            out.writeBoolean(inboundHandlingTimeBucketFrequencies.length > 0);
-            for (long handlingTimeBucketFrequency : inboundHandlingTimeBucketFrequencies) {
-                out.writeVLong(handlingTimeBucketFrequency);
-            }
-            for (long handlingTimeBucketFrequency : outboundHandlingTimeBucketFrequencies) {
-                out.writeVLong(handlingTimeBucketFrequency);
-            }
+        assert inboundHandlingTimeBucketFrequencies.length == HandlingTimeTracker.BUCKET_COUNT;
+        assert outboundHandlingTimeBucketFrequencies.length == HandlingTimeTracker.BUCKET_COUNT;
+        if (out.getTransportVersion().before(TransportVersions.TRANSPORT_STATS_HANDLING_TIME_REQUIRED)
+            && out.getTransportVersion().isPatchFrom(TransportVersions.V_9_0_0) == false) {
+            out.writeBoolean(true);
         }
-        if (out.getTransportVersion().onOrAfter(TransportVersion.V_8_8_0)) {
-            out.writeMap(transportActionStats, StreamOutput::writeString, StreamOutput::writeWriteable);
+        for (long handlingTimeBucketFrequency : inboundHandlingTimeBucketFrequencies) {
+            out.writeVLong(handlingTimeBucketFrequency);
+        }
+        for (long handlingTimeBucketFrequency : outboundHandlingTimeBucketFrequencies) {
+            out.writeVLong(handlingTimeBucketFrequency);
+        }
+        if (out.getTransportVersion().onOrAfter(TransportVersions.V_8_8_0)) {
+            out.writeMap(transportActionStats, StreamOutput::writeWriteable);
         } // else just drop these stats
     }
 
@@ -119,14 +120,6 @@ public class TransportStats implements Writeable, ChunkedToXContent {
 
     public long getServerOpen() {
         return serverOpen();
-    }
-
-    public long totalOutboundConnections() {
-        return this.totalOutboundConnections;
-    }
-
-    public long getTotalOutboundConnections() {
-        return totalOutboundConnections();
     }
 
     public long rxCount() {
@@ -175,55 +168,34 @@ public class TransportStats implements Writeable, ChunkedToXContent {
 
     private boolean assertHistogramsConsistent() {
         assert inboundHandlingTimeBucketFrequencies.length == outboundHandlingTimeBucketFrequencies.length;
-        if (inboundHandlingTimeBucketFrequencies.length == 0) {
-            // Stats came from before v8.1
-            assert Version.CURRENT.major == Version.V_8_0_0.major;
-        } else {
-            assert inboundHandlingTimeBucketFrequencies.length == HandlingTimeTracker.BUCKET_COUNT;
-        }
+        assert inboundHandlingTimeBucketFrequencies.length == HandlingTimeTracker.BUCKET_COUNT;
         return true;
     }
 
     @Override
     public Iterator<? extends ToXContent> toXContentChunked(ToXContent.Params outerParams) {
-        return Iterators.<ToXContent>concat(
+        return Iterators.concat(Iterators.single((builder, params) -> {
+            builder.startObject(Fields.TRANSPORT);
+            builder.field(Fields.SERVER_OPEN, serverOpen);
+            builder.field(Fields.TOTAL_OUTBOUND_CONNECTIONS, totalOutboundConnections);
+            builder.field(Fields.RX_COUNT, rxCount);
+            builder.humanReadableField(Fields.RX_SIZE_IN_BYTES, Fields.RX_SIZE, ByteSizeValue.ofBytes(rxSize));
+            builder.field(Fields.TX_COUNT, txCount);
+            builder.humanReadableField(Fields.TX_SIZE_IN_BYTES, Fields.TX_SIZE, ByteSizeValue.ofBytes(txSize));
+            assert inboundHandlingTimeBucketFrequencies.length > 0;
+            histogramToXContent(builder, inboundHandlingTimeBucketFrequencies, Fields.INBOUND_HANDLING_TIME_HISTOGRAM);
+            histogramToXContent(builder, outboundHandlingTimeBucketFrequencies, Fields.OUTBOUND_HANDLING_TIME_HISTOGRAM);
+            builder.startObject(Fields.ACTIONS);
+            return builder;
+        }),
 
-            Iterators.single((builder, params) -> {
-                builder.startObject(Fields.TRANSPORT);
-                builder.field(Fields.SERVER_OPEN, serverOpen);
-                builder.field(Fields.TOTAL_OUTBOUND_CONNECTIONS, totalOutboundConnections);
-                builder.field(Fields.RX_COUNT, rxCount);
-                builder.humanReadableField(Fields.RX_SIZE_IN_BYTES, Fields.RX_SIZE, ByteSizeValue.ofBytes(rxSize));
-                builder.field(Fields.TX_COUNT, txCount);
-                builder.humanReadableField(Fields.TX_SIZE_IN_BYTES, Fields.TX_SIZE, ByteSizeValue.ofBytes(txSize));
-                if (inboundHandlingTimeBucketFrequencies.length > 0) {
-                    histogramToXContent(builder, inboundHandlingTimeBucketFrequencies, Fields.INBOUND_HANDLING_TIME_HISTOGRAM);
-                    histogramToXContent(builder, outboundHandlingTimeBucketFrequencies, Fields.OUTBOUND_HANDLING_TIME_HISTOGRAM);
-                } else {
-                    // Stats came from before v8.1
-                    assert Version.CURRENT.major == Version.V_7_0_0.major + 1;
-                }
-                if (transportActionStats.isEmpty() == false) {
-                    builder.startObject(Fields.ACTIONS);
-                } else {
-                    // Stats came from before v8.8
-                    assert Version.CURRENT.major == Version.V_7_0_0.major + 1;
-                }
-                return builder;
-            }),
-
-            Iterators.flatMap(transportActionStats.entrySet().iterator(), entry -> Iterators.single((builder, params) -> {
+            Iterators.map(transportActionStats.entrySet().iterator(), entry -> (builder, params) -> {
                 builder.field(entry.getKey());
                 entry.getValue().toXContent(builder, params);
                 return builder;
-            })),
+            }),
 
-            Iterators.single((builder, params) -> {
-                if (transportActionStats.isEmpty() == false) {
-                    builder.endObject();
-                }
-                return builder.endObject();
-            })
+            Iterators.single((builder, params) -> { return builder.endObject().endObject(); })
         );
     }
 

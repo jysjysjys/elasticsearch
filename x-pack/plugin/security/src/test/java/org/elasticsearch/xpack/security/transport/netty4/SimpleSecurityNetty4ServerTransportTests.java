@@ -14,11 +14,14 @@ import io.netty.handler.ssl.SslHandshakeTimeoutException;
 import org.apache.lucene.util.Constants;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.TransportVersion;
-import org.elasticsearch.Version;
+import org.elasticsearch.TransportVersions;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.PlainActionFuture;
+import org.elasticsearch.action.support.TestPlainActionFuture;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodeRole;
+import org.elasticsearch.cluster.node.DiscoveryNodeUtils;
+import org.elasticsearch.cluster.node.VersionInformation;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.OutputStreamStreamOutput;
 import org.elasticsearch.common.network.NetworkService;
@@ -32,6 +35,7 @@ import org.elasticsearch.common.transport.TransportAddress;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.PageCacheRecycler;
 import org.elasticsearch.core.IOUtils;
+import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.SuppressForbidden;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.env.TestEnvironment;
@@ -57,6 +61,7 @@ import org.elasticsearch.transport.netty4.SharedGroupFactory;
 import org.elasticsearch.xpack.core.XPackSettings;
 import org.elasticsearch.xpack.core.common.socket.SocketAccess;
 import org.elasticsearch.xpack.core.ssl.SSLService;
+import org.elasticsearch.xpack.security.authc.CrossClusterAccessAuthenticationService;
 import org.elasticsearch.xpack.security.transport.SSLEngineUtils;
 import org.elasticsearch.xpack.security.transport.filter.IPFilter;
 
@@ -77,6 +82,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -106,12 +112,12 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.startsWith;
+import static org.mockito.Mockito.mock;
 
 public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTransportTestCase {
     @Override
     protected Transport build(Settings settings, TransportVersion version, ClusterSettings clusterSettings, boolean doHandshake) {
         NamedWriteableRegistry namedWriteableRegistry = new NamedWriteableRegistry(Collections.emptyList());
-        NetworkService networkService = new NetworkService(Collections.emptyList());
         Settings settings1 = Settings.builder().put(settings).put("xpack.security.transport.ssl.enabled", true).build();
         return new TestSecurityNetty4ServerTransport(
             settings1,
@@ -164,25 +170,15 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
     }
 
     public void testConnectException() throws UnknownHostException {
-        try {
-            connectToNode(
-                serviceA,
-                new DiscoveryNode(
-                    "C",
-                    new TransportAddress(InetAddress.getByName("localhost"), 9876),
-                    emptyMap(),
-                    emptySet(),
-                    Version.CURRENT
-                )
-            );
-            fail("Expected ConnectTransportException");
-        } catch (ConnectTransportException e) {
-            assertThat(e.getMessage(), containsString("connect_exception"));
-            assertThat(e.getMessage(), containsString("[127.0.0.1:9876]"));
-            Throwable cause = ExceptionsHelper.unwrap(e, IOException.class);
-            assertThat(cause, instanceOf(IOException.class));
-        }
-
+        final ConnectTransportException e = connectToNodeExpectFailure(
+            serviceA,
+            DiscoveryNodeUtils.create("C", new TransportAddress(InetAddress.getByName("localhost"), 9876), emptyMap(), emptySet()),
+            null
+        );
+        assertThat(e.getMessage(), containsString("connect_exception"));
+        assertThat(e.getMessage(), containsString("[127.0.0.1:9876]"));
+        Throwable cause = ExceptionsHelper.unwrap(e, IOException.class);
+        assertThat(cause, instanceOf(IOException.class));
     }
 
     @Override
@@ -191,19 +187,17 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
         TcpTransport originalTransport = (TcpTransport) serviceA.getOriginalTransport();
 
         ConnectionProfile connectionProfile = ConnectionProfile.buildDefaultConnectionProfile(Settings.EMPTY);
-        try (TransportService service = buildService("TS_TPC", Version.CURRENT, TransportVersion.CURRENT, Settings.EMPTY)) {
-            DiscoveryNode node = new DiscoveryNode(
-                "TS_TPC",
-                "TS_TPC",
-                service.boundAddress().publishAddress(),
-                emptyMap(),
-                emptySet(),
-                version0
-            );
-            PlainActionFuture<Transport.Connection> future = PlainActionFuture.newFuture();
+        try (TransportService service = buildService("TS_TPC", VersionInformation.CURRENT, TransportVersion.current(), Settings.EMPTY)) {
+            DiscoveryNode node = DiscoveryNodeUtils.builder("TS_TPC")
+                .name("TS_TPC")
+                .address(service.boundAddress().publishAddress())
+                .roles(emptySet())
+                .version(version0)
+                .build();
+            PlainActionFuture<Transport.Connection> future = new PlainActionFuture<>();
             originalTransport.openConnection(node, connectionProfile, future);
             try (TcpTransport.NodeChannels connection = (TcpTransport.NodeChannels) future.actionGet()) {
-                assertEquals(TransportVersion.CURRENT, connection.getTransportVersion());
+                assertEquals(TransportVersion.current(), connection.getTransportVersion());
             }
         }
     }
@@ -311,20 +305,16 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
             try (MockTransportService serviceC = buildService("TS_C", version0, transportVersion0, settings)) {
                 HashMap<String, String> attributes = new HashMap<>();
                 attributes.put("server_name", sniIp);
-                DiscoveryNode node = new DiscoveryNode(
+                DiscoveryNode node = DiscoveryNodeUtils.create(
                     "server_node_id",
                     new TransportAddress(serverAddress),
                     attributes,
-                    DiscoveryNodeRole.roles(),
-                    Version.CURRENT
+                    DiscoveryNodeRole.roles()
                 );
 
                 new Thread(() -> {
-                    try {
-                        connectToNode(serviceC, node, TestProfiles.LIGHT_PROFILE);
-                    } catch (ConnectTransportException ex) {
-                        // Ignore. The other side is not setup to do the ES handshake. So this will fail.
-                    }
+                    // noinspection ThrowableNotThrown
+                    connectToNodeExpectFailure(serviceC, node, TestProfiles.LIGHT_PROFILE);
                 }).start();
 
                 latch.await();
@@ -359,20 +349,17 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
             try (MockTransportService serviceC = buildService("TS_C", version0, transportVersion0, settings)) {
                 HashMap<String, String> attributes = new HashMap<>();
                 attributes.put("server_name", sniIp);
-                DiscoveryNode node = new DiscoveryNode(
+                DiscoveryNode node = DiscoveryNodeUtils.create(
                     "server_node_id",
                     new TransportAddress(serverAddress),
                     attributes,
-                    DiscoveryNodeRole.roles(),
-                    Version.CURRENT
+                    DiscoveryNodeRole.roles()
                 );
 
-                ConnectTransportException connectException = expectThrows(
-                    ConnectTransportException.class,
-                    () -> connectToNode(serviceC, node, TestProfiles.LIGHT_PROFILE)
+                assertThat(
+                    connectToNodeExpectFailure(serviceC, node, TestProfiles.LIGHT_PROFILE).getMessage(),
+                    containsString("invalid DiscoveryNode server_name [invalid_hostname]")
                 );
-
-                assertThat(connectException.getMessage(), containsString("invalid DiscoveryNode server_name [invalid_hostname]"));
             }
         }
     }
@@ -391,7 +378,14 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
         // test required client authentication
         String value = randomCapitalization(SslClientAuthenticationMode.REQUIRED);
         Settings settings = Settings.builder().put("xpack.security.transport.ssl.client_authentication", value).build();
-        try (MockTransportService service = buildService("TS_REQUIRED_CLIENT_AUTH", Version.CURRENT, TransportVersion.CURRENT, settings)) {
+        try (
+            MockTransportService service = buildService(
+                "TS_REQUIRED_CLIENT_AUTH",
+                VersionInformation.CURRENT,
+                TransportVersion.current(),
+                settings
+            )
+        ) {
             TcpTransport originalTransport = (TcpTransport) service.getOriginalTransport();
             try (Transport.Connection connection2 = openConnection(serviceA, service.getLocalNode(), TestProfiles.LIGHT_PROFILE)) {
                 sslEngine = getEngineFromAcceptedChannel(originalTransport, connection2);
@@ -403,7 +397,14 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
         // test no client authentication
         value = randomCapitalization(SslClientAuthenticationMode.NONE);
         settings = Settings.builder().put("xpack.security.transport.ssl.client_authentication", value).build();
-        try (MockTransportService service = buildService("TS_NO_CLIENT_AUTH", Version.CURRENT, TransportVersion.CURRENT, settings)) {
+        try (
+            MockTransportService service = buildService(
+                "TS_NO_CLIENT_AUTH",
+                VersionInformation.CURRENT,
+                TransportVersion.current(),
+                settings
+            )
+        ) {
             TcpTransport originalTransport = (TcpTransport) service.getOriginalTransport();
             try (Transport.Connection connection2 = openConnection(serviceA, service.getLocalNode(), TestProfiles.LIGHT_PROFILE)) {
                 sslEngine = getEngineFromAcceptedChannel(originalTransport, connection2);
@@ -415,7 +416,14 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
         // test optional client authentication
         value = randomCapitalization(SslClientAuthenticationMode.OPTIONAL);
         settings = Settings.builder().put("xpack.security.transport.ssl.client_authentication", value).build();
-        try (MockTransportService service = buildService("TS_OPTIONAL_CLIENT_AUTH", Version.CURRENT, TransportVersion.CURRENT, settings)) {
+        try (
+            MockTransportService service = buildService(
+                "TS_OPTIONAL_CLIENT_AUTH",
+                VersionInformation.CURRENT,
+                TransportVersion.current(),
+                settings
+            )
+        ) {
             TcpTransport originalTransport = (TcpTransport) service.getOriginalTransport();
             try (Transport.Connection connection2 = openConnection(serviceA, service.getLocalNode(), TestProfiles.LIGHT_PROFILE)) {
                 sslEngine = getEngineFromAcceptedChannel(originalTransport, connection2);
@@ -436,14 +444,18 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
         try (
             MockTransportService service = buildService(
                 "TS_PROFILE_REQUIRE_CLIENT_AUTH",
-                Version.CURRENT,
-                TransportVersion.CURRENT,
+                VersionInformation.CURRENT,
+                TransportVersion.current(),
                 settings
             )
         ) {
             TcpTransport originalTransport = (TcpTransport) service.getOriginalTransport();
             TransportAddress clientAddress = originalTransport.profileBoundAddresses().get("client").publishAddress();
-            DiscoveryNode node = new DiscoveryNode(service.getLocalNode().getId(), clientAddress, service.getLocalNode().getVersion());
+            DiscoveryNode node = DiscoveryNodeUtils.create(
+                service.getLocalNode().getId(),
+                clientAddress,
+                service.getLocalNode().getVersionInformation()
+            );
             try (Transport.Connection connection2 = openConnection(serviceA, node, TestProfiles.LIGHT_PROFILE)) {
                 sslEngine = getEngineFromAcceptedChannel(originalTransport, connection2);
                 assertEquals("client", getAcceptedChannel(originalTransport, connection2).getProfile());
@@ -462,11 +474,20 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
             .put("transport.profiles.client.xpack.security.ssl.client_authentication", value)
             .build();
         try (
-            MockTransportService service = buildService("TS_PROFILE_NO_CLIENT_AUTH", Version.CURRENT, TransportVersion.CURRENT, settings)
+            MockTransportService service = buildService(
+                "TS_PROFILE_NO_CLIENT_AUTH",
+                VersionInformation.CURRENT,
+                TransportVersion.current(),
+                settings
+            )
         ) {
             TcpTransport originalTransport = (TcpTransport) service.getOriginalTransport();
             TransportAddress clientAddress = originalTransport.profileBoundAddresses().get("client").publishAddress();
-            DiscoveryNode node = new DiscoveryNode(service.getLocalNode().getId(), clientAddress, service.getLocalNode().getVersion());
+            DiscoveryNode node = DiscoveryNodeUtils.create(
+                service.getLocalNode().getId(),
+                clientAddress,
+                service.getLocalNode().getVersionInformation()
+            );
             try (Transport.Connection connection2 = openConnection(serviceA, node, TestProfiles.LIGHT_PROFILE)) {
                 sslEngine = getEngineFromAcceptedChannel(originalTransport, connection2);
                 assertEquals("client", getAcceptedChannel(originalTransport, connection2).getProfile());
@@ -487,14 +508,18 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
         try (
             MockTransportService service = buildService(
                 "TS_PROFILE_OPTIONAL_CLIENT_AUTH",
-                Version.CURRENT,
-                TransportVersion.CURRENT,
+                VersionInformation.CURRENT,
+                TransportVersion.current(),
                 settings
             )
         ) {
             TcpTransport originalTransport = (TcpTransport) service.getOriginalTransport();
             TransportAddress clientAddress = originalTransport.profileBoundAddresses().get("client").publishAddress();
-            DiscoveryNode node = new DiscoveryNode(service.getLocalNode().getId(), clientAddress, service.getLocalNode().getVersion());
+            DiscoveryNode node = DiscoveryNodeUtils.create(
+                service.getLocalNode().getId(),
+                clientAddress,
+                service.getLocalNode().getVersionInformation()
+            );
             try (Transport.Connection connection2 = openConnection(serviceA, node, TestProfiles.LIGHT_PROFILE)) {
                 sslEngine = getEngineFromAcceptedChannel(originalTransport, connection2);
                 assertEquals("client", getAcceptedChannel(originalTransport, connection2).getProfile());
@@ -525,31 +550,32 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
 
         final Settings fcSettings = Settings.builder()
             .put("remote_cluster_server.enabled", "true")
-            .put("remote_cluster.port", "9999")
+            .put("remote_cluster.port", "0")
             .put("xpack.security.remote_cluster_server.ssl.key", testnodeKey)
             .put("xpack.security.remote_cluster_server.ssl.certificate", testnodeCert)
             .put("xpack.security.remote_cluster_server.ssl.client_authentication", "none")
             .build();
 
-        try (MockTransportService fcService = buildService("FC", Version.CURRENT, TransportVersion.CURRENT, fcSettings)) {
+        try (MockTransportService fcService = buildService("FC", VersionInformation.CURRENT, TransportVersion.current(), fcSettings)) {
             final TcpTransport originalTransport = (TcpTransport) fcService.getOriginalTransport();
             final TransportAddress remoteAccessAddress = originalTransport.profileBoundAddresses().get("_remote_cluster").publishAddress();
-            final DiscoveryNode node = new DiscoveryNode(
+            final DiscoveryNode node = DiscoveryNodeUtils.create(
                 fcService.getLocalNode().getId(),
                 remoteAccessAddress,
-                fcService.getLocalNode().getVersion()
+                fcService.getLocalNode().getVersionInformation()
             );
 
             // 1. Connection will fail because FC server certificate is not trusted by default
             final Settings qcSettings1 = Settings.builder().build();
-            try (MockTransportService qcService = buildService("QC", Version.CURRENT, TransportVersion.CURRENT, qcSettings1)) {
-                final ConnectTransportException e = expectThrows(
-                    ConnectTransportException.class,
-                    () -> openConnection(qcService, node, connectionProfile)
-                );
+            try (MockTransportService qcService = buildService("QC", VersionInformation.CURRENT, TransportVersion.current(), qcSettings1)) {
+                final ConnectTransportException e = openConnectionExpectFailure(qcService, node, connectionProfile);
                 assertThat(
                     e.getRootCause().getMessage(),
-                    anyOf(containsString("unable to find valid certification path"), containsString("Unable to find certificate chain"))
+                    anyOf(
+                        containsString("unable to find valid certification path"),
+                        containsString("Unable to find certificate chain"),
+                        containsString("Unable to construct a valid chain")
+                    )
                 );
             }
 
@@ -559,7 +585,7 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
                 .put("remote_cluster.tcp.keep_alive", "false")
                 .build();
             try (
-                MockTransportService qcService = buildService("QC", Version.CURRENT, TransportVersion.CURRENT, qcSettings2);
+                MockTransportService qcService = buildService("QC", VersionInformation.CURRENT, TransportVersion.current(), qcSettings2);
                 Transport.Connection connection = openConnection(qcService, node, connectionProfile)
             ) {
                 assertThat(connection, instanceOf(StubbableTransport.WrappedConnection.class));
@@ -595,7 +621,7 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
                 .put("remote_cluster.tcp.keep_count", 102)
                 .build();
             try (
-                MockTransportService qcService = buildService("QC", Version.CURRENT, TransportVersion.CURRENT, qcSettings3);
+                MockTransportService qcService = buildService("QC", VersionInformation.CURRENT, TransportVersion.current(), qcSettings3);
                 Transport.Connection connection = openConnection(qcService, node, connectionProfile)
             ) {
                 assertThat(connection, instanceOf(StubbableTransport.WrappedConnection.class));
@@ -647,21 +673,21 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
 
         final Settings fcSettings = Settings.builder()
             .put("remote_cluster_server.enabled", "true")
-            .put("remote_cluster.port", "9999")
+            .put("remote_cluster.port", "0")
             .put("xpack.security.remote_cluster_server.ssl.enabled", "false")
             .build();
 
-        try (MockTransportService fcService = buildService("FC", Version.CURRENT, TransportVersion.CURRENT, fcSettings)) {
+        try (MockTransportService fcService = buildService("FC", VersionInformation.CURRENT, TransportVersion.current(), fcSettings)) {
             final TcpTransport originalTransport = (TcpTransport) fcService.getOriginalTransport();
             final TransportAddress remoteAccessAddress = originalTransport.profileBoundAddresses().get("_remote_cluster").publishAddress();
-            final DiscoveryNode node = new DiscoveryNode(
+            final DiscoveryNode node = DiscoveryNodeUtils.create(
                 fcService.getLocalNode().getId(),
                 remoteAccessAddress,
-                fcService.getLocalNode().getVersion()
+                fcService.getLocalNode().getVersionInformation()
             );
             final Settings qcSettings = Settings.builder().put("xpack.security.remote_cluster_client.ssl.enabled", "false").build();
             try (
-                MockTransportService qcService = buildService("QC", Version.CURRENT, TransportVersion.CURRENT, qcSettings);
+                MockTransportService qcService = buildService("QC", VersionInformation.CURRENT, TransportVersion.current(), qcSettings);
                 Transport.Connection connection = openConnection(qcService, node, connectionProfile)
             ) {
                 assertThat(connection, instanceOf(StubbableTransport.WrappedConnection.class));
@@ -708,7 +734,7 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
                 .put(TransportSettings.TCP_REUSE_ADDRESS.getKey(), randomBoolean());
         }
         final Settings qcSettings1 = builder1.build();
-        try (MockTransportService qcService = buildService("QC", Version.CURRENT, TransportVersion.CURRENT, qcSettings1)) {
+        try (MockTransportService qcService = buildService("QC", VersionInformation.CURRENT, TransportVersion.current(), qcSettings1)) {
             final var transport = (TestSecurityNetty4ServerTransport) qcService.getOriginalTransport();
             // RCS remote cluster client
             final Bootstrap rcsBootstrap = transport.getClientBootstrap(connectionProfile);
@@ -768,7 +794,7 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
             .put(RemoteClusterPortSettings.TCP_REUSE_ADDRESS.getKey(), false)
             .build();
 
-        try (MockTransportService qcService = buildService("QC", Version.CURRENT, TransportVersion.CURRENT, qcSettings2)) {
+        try (MockTransportService qcService = buildService("QC", VersionInformation.CURRENT, TransportVersion.current(), qcSettings2)) {
             final var transport = (TestSecurityNetty4ServerTransport) qcService.getOriginalTransport();
             // RCS remote cluster client
             final Map<ChannelOption<?>, Object> rcsOptions = transport.getClientBootstrap(connectionProfile).config().options();
@@ -805,7 +831,7 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
             .put(RemoteClusterPortSettings.TCP_KEEP_INTERVAL.getKey(), 101)
             .put(RemoteClusterPortSettings.TCP_KEEP_COUNT.getKey(), 102)
             .build();
-        try (MockTransportService qcService = buildService("QC", Version.CURRENT, TransportVersion.CURRENT, qcSettings3)) {
+        try (MockTransportService qcService = buildService("QC", VersionInformation.CURRENT, TransportVersion.current(), qcSettings3)) {
             final var transport = (TestSecurityNetty4ServerTransport) qcService.getOriginalTransport();
             // RCS remote cluster client
             final Map<ChannelOption<?>, Object> rcsOptions = transport.getClientBootstrap(connectionProfile).config().options();
@@ -842,20 +868,18 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
                     // A read call will execute the ssl handshake
                     int byteRead = acceptedSocket.getInputStream().read();
                     assertEquals('E', byteRead);
-                    doneLatch.await();
+                    safeAwait(doneLatch);
                 } catch (Exception e) {
                     throw new AssertionError(e);
                 } finally {
                     IOUtils.closeWhileHandlingException(acceptedSocket);
                 }
             }).start();
-            DiscoveryNode dummy = new DiscoveryNode(
-                "TEST",
-                new TransportAddress(socket.getInetAddress(), socket.getLocalPort()),
-                emptyMap(),
-                emptySet(),
-                version0
-            );
+            DiscoveryNode dummy = DiscoveryNodeUtils.builder("TEST")
+                .address(new TransportAddress(socket.getInetAddress(), socket.getLocalPort()))
+                .roles(emptySet())
+                .version(version0)
+                .build();
             ConnectionProfile.Builder builder = new ConnectionProfile.Builder();
             builder.addConnections(
                 1,
@@ -868,11 +892,10 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
             builder.setHandshakeTimeout(TimeValue.timeValueMillis(1));
             Settings settings = Settings.builder().put("xpack.security.transport.ssl.verification_mode", "none").build();
             try (MockTransportService serviceC = buildService("TS_C", version0, transportVersion0, settings)) {
-                ConnectTransportException ex = expectThrows(
-                    ConnectTransportException.class,
-                    () -> connectToNode(serviceC, dummy, builder.build())
+                assertEquals(
+                    "[][" + dummy.getAddress() + "] handshake_timeout[1ms]",
+                    connectToNodeExpectFailure(serviceC, dummy, builder.build()).getMessage()
                 );
-                assertEquals("[][" + dummy.getAddress() + "] handshake_timeout[1ms]", ex.getMessage());
             }
         } finally {
             doneLatch.countDown();
@@ -891,13 +914,11 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
                     throw new AssertionError(e);
                 }
             }).start();
-            DiscoveryNode dummy = new DiscoveryNode(
-                "TEST",
-                new TransportAddress(socket.getInetAddress(), socket.getLocalPort()),
-                emptyMap(),
-                emptySet(),
-                version0
-            );
+            DiscoveryNode dummy = DiscoveryNodeUtils.builder("TEST")
+                .address(new TransportAddress(socket.getInetAddress(), socket.getLocalPort()))
+                .roles(emptySet())
+                .version(version0)
+                .build();
             ConnectionProfile.Builder builder = new ConnectionProfile.Builder();
             builder.addConnections(
                 1,
@@ -907,10 +928,9 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
                 TransportRequestOptions.Type.REG,
                 TransportRequestOptions.Type.STATE
             );
-            ConnectTransportException ex = expectThrows(
-                ConnectTransportException.class,
-                () -> connectToNode(serviceA, dummy, builder.build())
-            );
+            final var future = new TestPlainActionFuture<Releasable>();
+            serviceA.connectToNode(dummy, builder.build(), future);
+            final var ex = expectThrows(ExecutionException.class, ConnectTransportException.class, future::get); // long wait
             assertEquals("[][" + dummy.getAddress() + "] connect_exception", ex.getMessage());
             assertNotNull(ExceptionsHelper.unwrap(ex, SslHandshakeTimeoutException.class));
         } finally {
@@ -928,13 +948,11 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
         try (ServerSocket socket = serverSocketFactory.createServerSocket()) {
             socket.bind(getLocalEphemeral(), 1);
             socket.setReuseAddress(true);
-            DiscoveryNode dummy = new DiscoveryNode(
-                "TEST",
-                new TransportAddress(socket.getInetAddress(), socket.getLocalPort()),
-                emptyMap(),
-                emptySet(),
-                version0
-            );
+            DiscoveryNode dummy = DiscoveryNodeUtils.builder("TEST")
+                .address(new TransportAddress(socket.getInetAddress(), socket.getLocalPort()))
+                .roles(emptySet())
+                .version(version0)
+                .build();
             Thread t = new Thread(() -> {
                 try (Socket accept = SocketAccess.doPrivileged(socket::accept)) {
                     // A read call will execute the ssl handshake
@@ -957,10 +975,7 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
             builder.setHandshakeTimeout(TimeValue.timeValueHours(1));
             Settings settings = Settings.builder().put("xpack.security.transport.ssl.verification_mode", "none").build();
             try (MockTransportService serviceC = buildService("TS_C", version0, transportVersion0, settings)) {
-                ConnectTransportException ex = expectThrows(
-                    ConnectTransportException.class,
-                    () -> connectToNode(serviceC, dummy, builder.build())
-                );
+                ConnectTransportException ex = connectToNodeExpectFailure(serviceC, dummy, builder.build());
                 assertEquals("[][" + dummy.getAddress() + "] general node connection failure", ex.getMessage());
                 assertThat(ex.getCause().getMessage(), startsWith("handshake failed"));
             }
@@ -1001,6 +1016,7 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
 
     static class TestSecurityNetty4ServerTransport extends SecurityNetty4ServerTransport {
         private final boolean doHandshake;
+        private final TransportVersion version;
 
         TestSecurityNetty4ServerTransport(
             Settings settings,
@@ -1025,8 +1041,10 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
                 circuitBreakerService,
                 authenticator,
                 sslService,
-                sharedGroupFactory
+                sharedGroupFactory,
+                mock(CrossClusterAccessAuthenticationService.class)
             );
+            this.version = version;
             this.doHandshake = doHandshake;
         }
 
@@ -1040,8 +1058,8 @@ public class SimpleSecurityNetty4ServerTransportTests extends AbstractSimpleTran
             if (doHandshake) {
                 super.executeHandshake(node, channel, profile, listener);
             } else {
-                assert getVersion().equals(TransportVersion.CURRENT);
-                listener.onResponse(TransportVersion.MINIMUM_COMPATIBLE);
+                assert version.equals(TransportVersion.current());
+                listener.onResponse(TransportVersions.MINIMUM_COMPATIBLE);
             }
         }
 

@@ -1,15 +1,17 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License
- * 2.0 and the Server Side Public License, v 1; you may not use this file except
- * in compliance with, at your election, the Elastic License 2.0 or the Server
- * Side Public License, v 1.
+ * or more contributor license agreements. Licensed under the "Elastic License
+ * 2.0", the "GNU Affero General Public License v3.0 only", and the "Server Side
+ * Public License v 1"; you may not use this file except in compliance with, at
+ * your election, the "Elastic License 2.0", the "GNU Affero General Public
+ * License v3.0 only", or the "Server Side Public License, v 1".
  */
 package org.elasticsearch.cluster;
 
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.util.Maps;
 import org.elasticsearch.index.shard.ShardId;
+import org.elasticsearch.test.AbstractChunkedSerializingTestCase;
 import org.elasticsearch.test.AbstractWireSerializingTestCase;
 
 import java.util.HashMap;
@@ -39,8 +41,25 @@ public class ClusterInfoTests extends AbstractWireSerializingTestCase<ClusterInf
             randomShardSizes(),
             randomDataSetSizes(),
             randomRoutingToDataPath(),
-            randomReservedSpace()
+            randomReservedSpace(),
+            randomNodeHeapUsage()
         );
+    }
+
+    private static Map<String, EstimatedHeapUsage> randomNodeHeapUsage() {
+        int numEntries = randomIntBetween(0, 128);
+        Map<String, EstimatedHeapUsage> nodeHeapUsage = new HashMap<>(numEntries);
+        for (int i = 0; i < numEntries; i++) {
+            String key = randomAlphaOfLength(32);
+            final int totalBytes = randomIntBetween(0, Integer.MAX_VALUE);
+            final EstimatedHeapUsage estimatedHeapUsage = new EstimatedHeapUsage(
+                randomAlphaOfLength(4),
+                totalBytes,
+                randomIntBetween(0, totalBytes)
+            );
+            nodeHeapUsage.put(key, estimatedHeapUsage);
+        }
+        return nodeHeapUsage;
     }
 
     private static Map<String, DiskUsage> randomDiskUsage() {
@@ -105,5 +124,14 @@ public class ClusterInfoTests extends AbstractWireSerializingTestCase<ClusterInf
             builder.put(new ClusterInfo.NodeAndPath(randomAlphaOfLength(10), randomAlphaOfLength(10)), valueBuilder.build());
         }
         return builder;
+    }
+
+    public void testChunking() {
+        AbstractChunkedSerializingTestCase.assertChunkCount(createTestInstance(), ClusterInfoTests::getChunkCount);
+    }
+
+    // exposing this to tests in other packages
+    public static int getChunkCount(ClusterInfo clusterInfo) {
+        return clusterInfo.getChunkCount();
     }
 }

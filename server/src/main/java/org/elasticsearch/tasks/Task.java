@@ -1,9 +1,10 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License
- * 2.0 and the Server Side Public License, v 1; you may not use this file except
- * in compliance with, at your election, the Elastic License 2.0 or the Server
- * Side Public License, v 1.
+ * or more contributor license agreements. Licensed under the "Elastic License
+ * 2.0", the "GNU Affero General Public License v3.0 only", and the "Server Side
+ * Public License v 1"; you may not use this file except in compliance with, at
+ * your election, the "Elastic License 2.0", the "GNU Affero General Public
+ * License v3.0 only", or the "Server Side Public License, v 1".
  */
 
 package org.elasticsearch.tasks;
@@ -11,6 +12,8 @@ package org.elasticsearch.tasks;
 import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.io.stream.NamedWriteable;
+import org.elasticsearch.core.Nullable;
+import org.elasticsearch.telemetry.tracing.Traceable;
 import org.elasticsearch.xcontent.ToXContent;
 import org.elasticsearch.xcontent.ToXContentObject;
 
@@ -21,12 +24,20 @@ import java.util.Set;
 /**
  * Current task information
  */
-public class Task {
+public class Task implements Traceable {
 
     /**
      * The request header to mark tasks with specific ids
      */
     public static final String X_OPAQUE_ID_HTTP_HEADER = "X-Opaque-Id";
+
+    /**
+     * A request header that indicates the origin of the request from Elastic stack. The value will stored in ThreadContext
+     * and emitted to ES logs
+     */
+    public static final String X_ELASTIC_PRODUCT_ORIGIN_HTTP_HEADER = "X-elastic-product-origin";
+
+    public static final String X_ELASTIC_PROJECT_ID_HTTP_HEADER = "X-Elastic-Project-Id";
 
     /**
      * The request header which is contained in HTTP request. We parse trace.id from it and store it in thread context.
@@ -37,30 +48,32 @@ public class Task {
     public static final String TRACE_PARENT_HTTP_HEADER = "traceparent";
 
     /**
-     * A request header that indicates the origin of the request from Elastic stack. The value will stored in ThreadContext
-     * and emitted to ES logs
+     * Parsed part of traceparent. It is stored in thread context and emitted in logs.
+     * Has to be declared as a header copied over for tasks.
      */
-    public static final String X_ELASTIC_PRODUCT_ORIGIN_HTTP_HEADER = "X-elastic-product-origin";
+    public static final String TRACE_ID = "trace.id";
 
     public static final String TRACE_STATE = "tracestate";
+
+    public static final String TRACE_START_TIME = "trace.starttime";
 
     /**
      * Used internally to pass the apm trace context between the nodes
      */
     public static final String APM_TRACE_CONTEXT = "apm.local.context";
 
-    /**
-     * Parsed part of traceparent. It is stored in thread context and emitted in logs.
-     * Has to be declared as a header copied over for tasks.
-     */
-    public static final String TRACE_ID = "trace.id";
-    public static final String TRACE_PARENT = "traceparent";
+    public static final String PARENT_TRACE_PARENT_HEADER = "parent_" + Task.TRACE_PARENT_HTTP_HEADER;
+
+    public static final String PARENT_TRACE_STATE = "parent_" + Task.TRACE_STATE;
+
+    public static final String PARENT_APM_TRACE_CONTEXT = "parent_" + Task.APM_TRACE_CONTEXT;
 
     public static final Set<String> HEADERS_TO_COPY = Set.of(
         X_OPAQUE_ID_HTTP_HEADER,
         TRACE_PARENT_HTTP_HEADER,
         TRACE_ID,
-        X_ELASTIC_PRODUCT_ORIGIN_HTTP_HEADER
+        X_ELASTIC_PRODUCT_ORIGIN_HTTP_HEADER,
+        X_ELASTIC_PROJECT_ID_HTTP_HEADER
     );
 
     private final long id;
@@ -136,6 +149,7 @@ public class Task {
         return new TaskInfo(
             new TaskId(localNodeId, getId()),
             getType(),
+            localNodeId,
             getAction(),
             description,
             status,
@@ -221,6 +235,8 @@ public class Task {
             + parentTask
             + ", startTime="
             + startTime
+            + ", headers="
+            + headers
             + ", startTimeNanos="
             + startTimeNanos
             + '}';
@@ -247,6 +263,11 @@ public class Task {
         return headers.get(header);
     }
 
+    @Nullable
+    public String getProjectId() {
+        return getHeader(X_ELASTIC_PROJECT_ID_HTTP_HEADER);
+    }
+
     public Map<String, String> headers() {
         return headers;
     }
@@ -261,5 +282,10 @@ public class Task {
         } else {
             throw new IllegalStateException("response has to implement ToXContent to be able to store the results");
         }
+    }
+
+    @Override
+    public String getSpanId() {
+        return "task-" + getId();
     }
 }

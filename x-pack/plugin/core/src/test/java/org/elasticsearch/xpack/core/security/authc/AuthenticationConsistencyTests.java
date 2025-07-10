@@ -11,8 +11,8 @@ import org.elasticsearch.TransportVersion;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.xpack.core.security.authc.service.ServiceAccountSettings;
 import org.elasticsearch.xpack.core.security.authc.support.AuthenticationContextSerializer;
+import org.elasticsearch.xpack.core.security.user.InternalUsers;
 import org.elasticsearch.xpack.core.security.user.User;
-import org.elasticsearch.xpack.core.security.user.XPackUser;
 
 import java.io.IOException;
 import java.util.List;
@@ -73,7 +73,7 @@ public class AuthenticationConsistencyTests extends ESTestCase {
             entry(
                 "Anonymous authentication cannot have internal user [_xpack]",
                 encodeAuthentication(
-                    new Subject(XPackUser.INSTANCE, Authentication.RealmRef.newAnonymousRealmRef("node")),
+                    new Subject(InternalUsers.XPACK_USER, Authentication.RealmRef.newAnonymousRealmRef("node")),
                     Authentication.AuthenticationType.ANONYMOUS
                 )
             ),
@@ -149,9 +149,39 @@ public class AuthenticationConsistencyTests extends ESTestCase {
                 )
             ),
             entry(
+                "Cloud API key authentication cannot have domain",
+                encodeAuthentication(
+                    new Subject(
+                        userFoo,
+                        new Authentication.RealmRef(
+                            AuthenticationField.CLOUD_API_KEY_REALM_NAME,
+                            AuthenticationField.CLOUD_API_KEY_REALM_TYPE,
+                            "node",
+                            new RealmDomain(
+                                "domain1",
+                                Set.of(
+                                    new RealmConfig.RealmIdentifier(
+                                        AuthenticationField.CLOUD_API_KEY_REALM_NAME,
+                                        AuthenticationField.CLOUD_API_KEY_REALM_TYPE
+                                    )
+                                )
+                            )
+                        )
+                    ),
+                    Authentication.AuthenticationType.API_KEY
+                )
+            ),
+            entry(
                 "API key authentication cannot have internal user [_xpack]",
                 encodeAuthentication(
-                    new Subject(XPackUser.INSTANCE, Authentication.RealmRef.newApiKeyRealmRef("node")),
+                    new Subject(InternalUsers.XPACK_USER, Authentication.RealmRef.newApiKeyRealmRef("node")),
+                    Authentication.AuthenticationType.API_KEY
+                )
+            ),
+            entry(
+                "Cloud API key authentication cannot have internal user [_xpack]",
+                encodeAuthentication(
+                    new Subject(InternalUsers.XPACK_USER, Authentication.RealmRef.newCloudApiKeyRealmRef("node")),
                     Authentication.AuthenticationType.API_KEY
                 )
             ),
@@ -176,7 +206,7 @@ public class AuthenticationConsistencyTests extends ESTestCase {
                     new Subject(
                         userFoo,
                         Authentication.RealmRef.newCrossClusterAccessRealmRef("node"),
-                        TransportVersion.CURRENT,
+                        TransportVersion.current(),
                         Map.of(AuthenticationField.API_KEY_ID_KEY, "abc")
                     ),
                     Authentication.AuthenticationType.API_KEY
@@ -188,7 +218,7 @@ public class AuthenticationConsistencyTests extends ESTestCase {
                     new Subject(
                         userFoo,
                         Authentication.RealmRef.newCrossClusterAccessRealmRef("node"),
-                        TransportVersion.CURRENT,
+                        TransportVersion.current(),
                         Map.of(
                             AuthenticationField.API_KEY_ID_KEY,
                             "abc",
@@ -206,7 +236,7 @@ public class AuthenticationConsistencyTests extends ESTestCase {
                     new Subject(
                         userFoo,
                         Authentication.RealmRef.newCrossClusterAccessRealmRef("node"),
-                        TransportVersion.CURRENT,
+                        TransportVersion.current(),
                         Map.of(
                             AuthenticationField.API_KEY_ID_KEY,
                             "abc",
@@ -224,7 +254,7 @@ public class AuthenticationConsistencyTests extends ESTestCase {
                     new Subject(
                         userFoo,
                         Authentication.RealmRef.newCrossClusterAccessRealmRef("node"),
-                        TransportVersion.CURRENT,
+                        TransportVersion.current(),
                         Map.of(
                             AuthenticationField.API_KEY_ID_KEY,
                             "abc",
@@ -234,6 +264,33 @@ public class AuthenticationConsistencyTests extends ESTestCase {
                             List.of()
                         )
                     ),
+                    Authentication.AuthenticationType.API_KEY
+                )
+            ),
+            entry(
+                "Cloud API key authentication cannot contain a role descriptors metadata field",
+                encodeAuthentication(
+                    new Subject(
+                        new User("api_key_id", "role1"),
+                        Authentication.RealmRef.newCloudApiKeyRealmRef("node"),
+                        TransportVersion.current(),
+                        Map.of(
+                            randomFrom(
+                                AuthenticationField.CROSS_CLUSTER_ACCESS_ROLE_DESCRIPTORS_KEY,
+                                AuthenticationField.API_KEY_ROLE_DESCRIPTORS_KEY,
+                                AuthenticationField.API_KEY_LIMITED_ROLE_DESCRIPTORS_KEY
+                            ),
+                            List.of()
+                        )
+                    ),
+                    Authentication.AuthenticationType.API_KEY
+                )
+            ),
+            entry(
+                "Cloud API key authentication cannot run-as other user",
+                encodeAuthentication(
+                    new Subject(userBar, realm2),
+                    new Subject(userFoo, Authentication.RealmRef.newCloudApiKeyRealmRef("node")),
                     Authentication.AuthenticationType.API_KEY
                 )
             ),
@@ -248,7 +305,7 @@ public class AuthenticationConsistencyTests extends ESTestCase {
             // Authentication type: Token
             entry(
                 "Token authentication cannot have internal user [_xpack]",
-                encodeAuthentication(new Subject(XPackUser.INSTANCE, realm1), Authentication.AuthenticationType.TOKEN)
+                encodeAuthentication(new Subject(InternalUsers.XPACK_USER, realm1), Authentication.AuthenticationType.TOKEN)
             ),
             entry(
                 "Service account authentication cannot have domain",
@@ -327,6 +384,14 @@ public class AuthenticationConsistencyTests extends ESTestCase {
                 "Run-as subject type cannot be [API_KEY]",
                 encodeAuthentication(
                     new Subject(userBar, Authentication.RealmRef.newApiKeyRealmRef("node")),
+                    new Subject(userFoo, realm1),
+                    Authentication.AuthenticationType.REALM
+                )
+            ),
+            entry(
+                "Run-as subject type cannot be [CLOUD_API_KEY]",
+                encodeAuthentication(
+                    new Subject(userBar, Authentication.RealmRef.newCloudApiKeyRealmRef("node")),
                     new Subject(userFoo, realm1),
                     Authentication.AuthenticationType.REALM
                 )

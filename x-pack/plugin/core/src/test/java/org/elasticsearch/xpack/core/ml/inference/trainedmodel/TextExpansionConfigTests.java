@@ -7,10 +7,8 @@
 
 package org.elasticsearch.xpack.core.ml.inference.trainedmodel;
 
-import org.elasticsearch.ElasticsearchStatusException;
 import org.elasticsearch.TransportVersion;
 import org.elasticsearch.common.io.stream.Writeable;
-import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.xcontent.XContentParser;
 import org.elasticsearch.xpack.core.ml.inference.InferenceConfigItemTestCase;
 
@@ -32,6 +30,14 @@ public class TextExpansionConfigTests extends InferenceConfigItemTestCase<TextEx
             randomBoolean() ? null : VocabularyConfigTests.createRandom(),
             randomBoolean() ? null : tokenization,
             randomBoolean() ? null : randomAlphaOfLength(5)
+        );
+    }
+
+    public static TextExpansionConfig mutateForVersion(TextExpansionConfig instance, TransportVersion version) {
+        return new TextExpansionConfig(
+            instance.getVocabularyConfig(),
+            InferenceConfigTestScaffolding.mutateTokenizationForVersion(instance.getTokenization(), version),
+            instance.getResultsField()
         );
     }
 
@@ -58,14 +64,5 @@ public class TextExpansionConfigTests extends InferenceConfigItemTestCase<TextEx
     @Override
     protected TextExpansionConfig mutateInstanceForVersion(TextExpansionConfig instance, TransportVersion version) {
         return instance;
-    }
-
-    public void testBertTokenizationOnly() {
-        ElasticsearchStatusException e = expectThrows(
-            ElasticsearchStatusException.class,
-            () -> new TextExpansionConfig(null, RobertaTokenizationTests.createRandom(), null)
-        );
-        assertEquals(RestStatus.BAD_REQUEST, e.status());
-        assertEquals("text expansion models must be configured with BERT tokenizer, [roberta] given", e.getMessage());
     }
 }

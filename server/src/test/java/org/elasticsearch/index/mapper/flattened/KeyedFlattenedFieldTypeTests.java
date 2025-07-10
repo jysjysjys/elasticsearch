@@ -1,9 +1,10 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License
- * 2.0 and the Server Side Public License, v 1; you may not use this file except
- * in compliance with, at your election, the Elastic License 2.0 or the Server
- * Side Public License, v 1.
+ * or more contributor license agreements. Licensed under the "Elastic License
+ * 2.0", the "GNU Affero General Public License v3.0 only", and the "Server Side
+ * Public License v 1"; you may not use this file except in compliance with, at
+ * your election, the "Elastic License 2.0", the "GNU Affero General Public
+ * License v3.0 only", or the "Server Side Public License, v 1".
  */
 
 package org.elasticsearch.index.mapper.flattened;
@@ -39,7 +40,7 @@ import static org.mockito.Mockito.when;
 public class KeyedFlattenedFieldTypeTests extends FieldTypeTestCase {
 
     private static KeyedFlattenedFieldType createFieldType() {
-        return new KeyedFlattenedFieldType("field", true, true, "key", false, Collections.emptyMap());
+        return new KeyedFlattenedFieldType("field", true, true, "key", false, Collections.emptyMap(), false);
     }
 
     public void testIndexedValueForSearch() {
@@ -64,7 +65,15 @@ public class KeyedFlattenedFieldTypeTests extends FieldTypeTestCase {
         expected = AutomatonQueries.caseInsensitiveTermQuery(new Term(ft.name(), "key\0value"));
         assertEquals(expected, ft.termQueryCaseInsensitive("value", null));
 
-        KeyedFlattenedFieldType unsearchable = new KeyedFlattenedFieldType("field", false, true, "key", false, Collections.emptyMap());
+        KeyedFlattenedFieldType unsearchable = new KeyedFlattenedFieldType(
+            "field",
+            false,
+            true,
+            "key",
+            false,
+            Collections.emptyMap(),
+            false
+        );
         IllegalArgumentException e = expectThrows(IllegalArgumentException.class, () -> unsearchable.termQuery("field", null));
         assertEquals("Cannot search on field [" + ft.name() + "] since it is not indexed.", e.getMessage());
     }
@@ -72,7 +81,7 @@ public class KeyedFlattenedFieldTypeTests extends FieldTypeTestCase {
     public void testTermsQuery() {
         KeyedFlattenedFieldType ft = createFieldType();
 
-        Query expected = new TermInSetQuery(ft.name(), new BytesRef("key\0value1"), new BytesRef("key\0value2"));
+        Query expected = new TermInSetQuery(ft.name(), List.of(new BytesRef("key\0value1"), new BytesRef("key\0value2")));
 
         List<String> terms = new ArrayList<>();
         terms.add("value1");

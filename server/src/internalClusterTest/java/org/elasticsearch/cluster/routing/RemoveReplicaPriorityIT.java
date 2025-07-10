@@ -1,9 +1,10 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License
- * 2.0 and the Server Side Public License, v 1; you may not use this file except
- * in compliance with, at your election, the Elastic License 2.0 or the Server
- * Side Public License, v 1.
+ * or more contributor license agreements. Licensed under the "Elastic License
+ * 2.0", the "GNU Affero General Public License v3.0 only", and the "Server Side
+ * Public License v 1"; you may not use this file except in compliance with, at
+ * your election, the "Elastic License 2.0", the "GNU Affero General Public
+ * License v3.0 only", or the "Server Side Public License, v 1".
  */
 
 package org.elasticsearch.cluster.routing;
@@ -52,9 +53,7 @@ public class RemoveReplicaPriorityIT extends ESIntegTestCase {
             });
         }
 
-        final String dataNodeIdFilter = client().admin()
-            .cluster()
-            .prepareState()
+        final String dataNodeIdFilter = clusterAdmin().prepareState(TEST_REQUEST_TIMEOUT)
             .clear()
             .setNodes(true)
             .get()
@@ -70,18 +69,13 @@ public class RemoveReplicaPriorityIT extends ESIntegTestCase {
 
         createIndex(
             INDEX_NAME,
-            Settings.builder()
-                .put(IndexMetadata.SETTING_NUMBER_OF_SHARDS, 1)
-                .put(IndexMetadata.SETTING_NUMBER_OF_REPLICAS, 3)
-                .put(IndexMetadata.INDEX_ROUTING_INCLUDE_GROUP_PREFIX + "._id", dataNodeIdFilter)
+            indexSettings(1, 3).put(IndexMetadata.INDEX_ROUTING_INCLUDE_GROUP_PREFIX + "._id", dataNodeIdFilter)
                 .put(IndexMetadata.INDEX_ROUTING_EXCLUDE_GROUP_PREFIX + "._id", excludedDataNodeId)
                 .build()
         );
 
         assertBusy(() -> {
-            final IndexShardRoutingTable indexShardRoutingTable = client().admin()
-                .cluster()
-                .prepareState()
+            final IndexShardRoutingTable indexShardRoutingTable = clusterAdmin().prepareState(TEST_REQUEST_TIMEOUT)
                 .clear()
                 .setRoutingTable(true)
                 .get()
@@ -97,9 +91,7 @@ public class RemoveReplicaPriorityIT extends ESIntegTestCase {
         updateIndexSettings(Settings.builder().putNull(IndexMetadata.INDEX_ROUTING_EXCLUDE_GROUP_PREFIX + "._id"), INDEX_NAME);
 
         assertBusy(() -> {
-            final IndexShardRoutingTable indexShardRoutingTable = client().admin()
-                .cluster()
-                .prepareState()
+            final IndexShardRoutingTable indexShardRoutingTable = clusterAdmin().prepareState(TEST_REQUEST_TIMEOUT)
                 .clear()
                 .setRoutingTable(true)
                 .get()
@@ -116,9 +108,7 @@ public class RemoveReplicaPriorityIT extends ESIntegTestCase {
             setReplicaCount(2, INDEX_NAME);
 
             assertBusy(() -> {
-                final IndexShardRoutingTable indexShardRoutingTable = client().admin()
-                    .cluster()
-                    .prepareState()
+                final IndexShardRoutingTable indexShardRoutingTable = clusterAdmin().prepareState(TEST_REQUEST_TIMEOUT)
                     .clear()
                     .setRoutingTable(true)
                     .get()
@@ -136,9 +126,7 @@ public class RemoveReplicaPriorityIT extends ESIntegTestCase {
             setReplicaCount(1, INDEX_NAME);
 
             assertBusy(() -> {
-                final IndexShardRoutingTable indexShardRoutingTable = client().admin()
-                    .cluster()
-                    .prepareState()
+                final IndexShardRoutingTable indexShardRoutingTable = clusterAdmin().prepareState(TEST_REQUEST_TIMEOUT)
                     .clear()
                     .setRoutingTable(true)
                     .get()
@@ -156,9 +144,7 @@ public class RemoveReplicaPriorityIT extends ESIntegTestCase {
             setReplicaCount(0, INDEX_NAME);
 
             assertBusy(() -> {
-                final IndexShardRoutingTable indexShardRoutingTable = client().admin()
-                    .cluster()
-                    .prepareState()
+                final IndexShardRoutingTable indexShardRoutingTable = clusterAdmin().prepareState(TEST_REQUEST_TIMEOUT)
                     .clear()
                     .setRoutingTable(true)
                     .get()

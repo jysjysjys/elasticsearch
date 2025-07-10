@@ -1,9 +1,10 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License
- * 2.0 and the Server Side Public License, v 1; you may not use this file except
- * in compliance with, at your election, the Elastic License 2.0 or the Server
- * Side Public License, v 1.
+ * or more contributor license agreements. Licensed under the "Elastic License
+ * 2.0", the "GNU Affero General Public License v3.0 only", and the "Server Side
+ * Public License v 1"; you may not use this file except in compliance with, at
+ * your election, the "Elastic License 2.0", the "GNU Affero General Public
+ * License v3.0 only", or the "Server Side Public License, v 1".
  */
 package org.elasticsearch.cluster.coordination;
 
@@ -11,7 +12,7 @@ import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.core.LogEvent;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.TransportVersion;
-import org.elasticsearch.Version;
+import org.elasticsearch.TransportVersions;
 import org.elasticsearch.cluster.AbstractNamedDiffable;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.SimpleDiffable;
@@ -22,8 +23,10 @@ import org.elasticsearch.cluster.coordination.Coordinator.Mode;
 import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodeRole;
+import org.elasticsearch.cluster.node.DiscoveryNodeUtils;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.service.ClusterStateUpdateStats;
+import org.elasticsearch.common.ReferenceDocs;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -38,7 +41,7 @@ import org.elasticsearch.discovery.DiscoveryModule;
 import org.elasticsearch.gateway.GatewayService;
 import org.elasticsearch.monitor.NodeHealthService;
 import org.elasticsearch.monitor.StatusInfo;
-import org.elasticsearch.test.MockLogAppender;
+import org.elasticsearch.test.MockLog;
 import org.elasticsearch.test.junit.annotations.TestLogging;
 import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.xcontent.ToXContent;
@@ -54,14 +57,15 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
+import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 
-import static java.util.Collections.emptyMap;
 import static org.elasticsearch.cluster.coordination.AbstractCoordinatorTestCase.Cluster.DEFAULT_DELAY_VARIABILITY;
-import static org.elasticsearch.cluster.coordination.AbstractCoordinatorTestCase.Cluster.EXTREME_DELAY_VARIABILITY;
 import static org.elasticsearch.cluster.coordination.Coordinator.Mode.CANDIDATE;
 import static org.elasticsearch.cluster.coordination.Coordinator.PUBLISH_TIMEOUT_SETTING;
+import static org.elasticsearch.cluster.coordination.ElectionSchedulerFactory.ELECTION_BACK_OFF_TIME_SETTING;
 import static org.elasticsearch.cluster.coordination.ElectionSchedulerFactory.ELECTION_INITIAL_TIMEOUT_SETTING;
+import static org.elasticsearch.cluster.coordination.ElectionSchedulerFactory.ELECTION_MAX_TIMEOUT_SETTING;
 import static org.elasticsearch.cluster.coordination.FollowersChecker.FOLLOWER_CHECK_INTERVAL_SETTING;
 import static org.elasticsearch.cluster.coordination.FollowersChecker.FOLLOWER_CHECK_RETRY_COUNT_SETTING;
 import static org.elasticsearch.cluster.coordination.FollowersChecker.FOLLOWER_CHECK_TIMEOUT_SETTING;
@@ -77,6 +81,8 @@ import static org.elasticsearch.discovery.PeerFinder.DISCOVERY_FIND_PEERS_INTERV
 import static org.elasticsearch.discovery.SettingsBasedSeedHostsProvider.DISCOVERY_SEED_HOSTS_SETTING;
 import static org.elasticsearch.monitor.StatusInfo.Status.HEALTHY;
 import static org.elasticsearch.monitor.StatusInfo.Status.UNHEALTHY;
+import static org.hamcrest.Matchers.allOf;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
@@ -91,7 +97,6 @@ import static org.hamcrest.Matchers.startsWith;
 
 @TestLogging(reason = "these tests do a lot of log-worthy things but we usually don't care", value = "org.elasticsearch:FATAL")
 public class CoordinatorTests extends AbstractCoordinatorTestCase {
-
     public void testCanUpdateClusterStateAfterStabilisation() {
         try (Cluster cluster = new Cluster(randomIntBetween(1, 5))) {
             cluster.runRandomly();
@@ -123,6 +128,10 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
     }
 
     public void testUnhealthyNodesGetsRemoved() {
+        testUnhealthyNodesGetsRemoved(true);
+    }
+
+    protected void testUnhealthyNodesGetsRemoved(boolean verifyVotingConfiguration) {
         AtomicReference<StatusInfo> healthStatusInfo = new AtomicReference<>(new StatusInfo(HEALTHY, "healthy-info"));
         try (Cluster cluster = new Cluster(3)) {
             cluster.runRandomly();
@@ -148,7 +157,7 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
                     + 2 * 2 * DEFAULT_CLUSTER_STATE_UPDATE_DELAY
             );
 
-            {
+            if (verifyVotingConfiguration) {
                 assertThat(leader.coordinator.getMode(), is(Mode.LEADER));
                 final VotingConfiguration lastCommittedConfiguration = leader.getLastAppliedClusterState().getLastCommittedConfiguration();
                 assertThat(
@@ -190,7 +199,8 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
                     // then wait for the followup reconfiguration
                     + DEFAULT_CLUSTER_STATE_UPDATE_DELAY
             );
-            {
+
+            if (verifyVotingConfiguration) {
                 final ClusterNode newLeader = cluster.getAnyLeader();
                 final VotingConfiguration lastCommittedConfiguration = newLeader.getLastAppliedClusterState()
                     .getLastCommittedConfiguration();
@@ -215,7 +225,11 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
     }
 
     public void testLeaderDisconnectionWithDisconnectEventDetectedQuickly() {
-        try (Cluster cluster = new Cluster(randomIntBetween(3, 5))) {
+        testLeaderDisconnectionWithDisconnectEventDetectedQuickly(Settings.EMPTY, TimeValue.ZERO);
+    }
+
+    protected void testLeaderDisconnectionWithDisconnectEventDetectedQuickly(Settings settings, TimeValue extraStabilisationTime) {
+        try (Cluster cluster = new Cluster(randomIntBetween(3, 5), true, settings)) {
             cluster.runRandomly();
             cluster.stabilise();
 
@@ -234,6 +248,8 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
                     + DEFAULT_CLUSTER_STATE_UPDATE_DELAY
                     // then wait for the followup reconfiguration
                     + DEFAULT_CLUSTER_STATE_UPDATE_DELAY
+                    // plus possibly some extra time according to the config
+                    + extraStabilisationTime.millis()
             );
             assertThat(cluster.getAnyLeader().getId(), not(equalTo(originalLeader.getId())));
         }
@@ -558,6 +574,8 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
             assertTrue("expected nack from " + follower0, ackCollector.hasAckedUnsuccessfully(follower0));
             assertTrue("expected ack from " + follower1, ackCollector.hasAckedSuccessfully(follower1));
             assertThat("leader should be last to ack", ackCollector.getSuccessfulAckIndex(leader), equalTo(1));
+
+            follower0.setClusterStateApplyResponse(ClusterStateApplyResponse.SUCCEED);
         }
     }
 
@@ -622,6 +640,10 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
     }
 
     public void testAckListenerReceivesNacksIfPublicationTimesOut() {
+        testAckListenerReceivesNacksIfPublicationTimesOut(false);
+    }
+
+    protected void testAckListenerReceivesNacksIfPublicationTimesOut(boolean expectLeaderAcksSuccessfullyInStateless) {
         try (Cluster cluster = new Cluster(3)) {
             cluster.runRandomly();
             cluster.stabilise();
@@ -636,17 +658,28 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
             assertFalse("expected no immediate ack from " + leader, ackCollector.hasAcked(leader));
             assertFalse("expected no immediate ack from " + follower0, ackCollector.hasAcked(follower0));
             assertFalse("expected no immediate ack from " + follower1, ackCollector.hasAcked(follower1));
+
             follower0.heal();
             follower1.heal();
             cluster.stabilise();
             assertTrue("expected eventual nack from " + follower0, ackCollector.hasAckedUnsuccessfully(follower0));
             assertTrue("expected eventual nack from " + follower1, ackCollector.hasAckedUnsuccessfully(follower1));
-            assertTrue("expected eventual nack from " + leader, ackCollector.hasAckedUnsuccessfully(leader));
+            if (expectLeaderAcksSuccessfullyInStateless) {
+                // A stateless leader directly updates the cluster state in the remote blob store: it does not require communication with
+                // the other cluster nodes to procceed with an update commit to the cluster state.
+                assertTrue("expected ack from leader, " + leader, ackCollector.hasAckedSuccessfully(leader));
+            } else {
+                assertTrue("expected eventual nack from leader, " + leader, ackCollector.hasAckedUnsuccessfully(leader));
+            }
         }
     }
 
     public void testAckListenerReceivesNacksIfLeaderStandsDown() {
-        try (Cluster cluster = new Cluster(3)) {
+        testAckListenerReceivesNacksIfLeaderStandsDown(Settings.EMPTY, TimeValue.ZERO);
+    }
+
+    protected void testAckListenerReceivesNacksIfLeaderStandsDown(Settings settings, TimeValue extraStabilisationTime) {
+        try (Cluster cluster = new Cluster(3, true, settings)) {
             cluster.runRandomly();
             cluster.stabilise();
             final ClusterNode leader = cluster.getAnyLeader();
@@ -659,7 +692,7 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
             // let followers elect a leader among themselves before healing the leader and running the publication
             cluster.runFor(
                 DEFAULT_DELAY_VARIABILITY // disconnect is scheduled
-                    + DEFAULT_ELECTION_DELAY,
+                    + DEFAULT_ELECTION_DELAY + extraStabilisationTime.millis(),
                 "elect new leader"
             );
             // cluster has two nodes in mode LEADER, in different terms ofc, and the one in the lower term won’t be able to publish anything
@@ -681,9 +714,11 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
             final ClusterNode follower1 = cluster.getAnyNodeExcept(leader, follower0);
 
             final long originalTerm = leader.coordinator.getCurrentTerm();
-            follower0.coordinator.onFollowerCheckRequest(
-                new FollowersChecker.FollowerCheckRequest(originalTerm + 1, leader.coordinator.getLocalNode())
-            );
+            follower0.onNode(
+                () -> follower0.coordinator.onFollowerCheckRequest(
+                    new FollowersChecker.FollowerCheckRequest(originalTerm + 1, leader.coordinator.getLocalNode())
+                )
+            ).run();
 
             AckCollector ackCollector = leader.submitValue(randomLong());
             cluster.runFor(DEFAULT_CLUSTER_STATE_UPDATE_DELAY, "cluster state update");
@@ -890,7 +925,7 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
 
             @Override
             public TransportVersion getMinimalSupportedVersion() {
-                return TransportVersion.CURRENT;
+                return TransportVersion.current();
             }
 
             @Override
@@ -1195,18 +1230,12 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
             List<ClusterNode> addedNodes = cluster.addNodes(randomIntBetween(1, 2));
             final long previousClusterStateVersion = cluster.getAnyLeader().getLastAppliedClusterState().version();
 
-            MockLogAppender mockAppender = new MockLogAppender();
-            try (var ignored = mockAppender.capturing(JoinHelper.class, Coordinator.class)) {
-                mockAppender.addExpectation(
-                    new MockLogAppender.SeenEventExpectation(
-                        "failed to join",
-                        JoinHelper.class.getCanonicalName(),
-                        Level.INFO,
-                        "*failed to join*"
-                    )
+            try (var mockLog = MockLog.capture(JoinHelper.class, Coordinator.class)) {
+                mockLog.addExpectation(
+                    new MockLog.SeenEventExpectation("failed to join", JoinHelper.class.getCanonicalName(), Level.INFO, "*failed to join*")
                 );
-                mockAppender.addExpectation(
-                    new MockLogAppender.SeenEventExpectation(
+                mockLog.addExpectation(
+                    new MockLog.SeenEventExpectation(
                         "failed to ping",
                         Coordinator.class.getCanonicalName(),
                         Level.WARN,
@@ -1214,7 +1243,7 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
                     )
                 );
                 cluster.runFor(10000, "failing joins");
-                mockAppender.assertAllExpectationsMatched();
+                mockLog.assertAllExpectationsMatched();
             }
 
             assertTrue(addedNodes.stream().allMatch(ClusterNode::isCandidate));
@@ -1250,21 +1279,50 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
         }
     }
 
-    public void testClusterCannotFormWithFailingJoinValidation() {
+    public void testClusterCannotFormWithFailingJoinValidation() throws Exception {
+        clusterCannotFormWithFailingJoinValidation(false);
+    }
+
+    /**
+     * Forms a random sized cluster and then disables join validation on either a random majority subset or all cluster nodes. Then checks
+     * that election fails.
+     *
+     * @param failJoinOnAllNodes this controls whether to fail join on all nodes or only a majority subset. The atomic register CAS election
+     *                           strategy will succeed in electing a master if any node can vote (even the master candidate voting for
+     *                           itself).
+     * @throws Exception
+     */
+    protected void clusterCannotFormWithFailingJoinValidation(boolean failJoinOnAllNodes) throws Exception {
         try (Cluster cluster = new Cluster(randomIntBetween(1, 5))) {
-            // fail join validation on a majority of nodes in the initial configuration
-            randomValueOtherThanMany(
-                nodes -> cluster.initialConfiguration.hasQuorum(
-                    nodes.stream().map(ClusterNode::getLocalNode).map(DiscoveryNode::getId).collect(Collectors.toSet())
-                ) == false,
-                () -> randomSubsetOf(cluster.clusterNodes)
-            ).forEach(cn -> cn.extraJoinValidators.add((discoveryNode, clusterState) -> {
+            List<ClusterNode> clusterNodesToFailJoin;
+            if (failJoinOnAllNodes) {
+                // The AtomicRegister strategy succeeds if a master candidate votes for itself, so we must disable all nodes from passing
+                // join validation so that none of them can self-elect.
+                clusterNodesToFailJoin = cluster.clusterNodes;
+            } else {
+                // Fetch a random subset of cluster nodes that form a quorum (majority subset).
+                clusterNodesToFailJoin = randomValueOtherThanMany(
+                    nodes -> cluster.initialConfiguration.hasQuorum(
+                        nodes.stream().map(ClusterNode::getLocalNode).map(DiscoveryNode::getId).collect(Collectors.toSet())
+                    ) == false,
+                    () -> randomSubsetOf(cluster.clusterNodes)
+                );
+            }
+
+            // Fail join validation on the set of nodes so that election will fail in the initial configuration.
+            clusterNodesToFailJoin.forEach(cn -> cn.extraJoinValidators.add((discoveryNode, clusterState) -> {
                 throw new IllegalArgumentException("join validation failed");
             }));
+
             cluster.bootstrapIfNecessary();
+
+            // Run the cluster for 10 seconds to give the cluster time to elect a master.
+            // It's possible stabilisation takes longer, but essentially impossible that it _always_ takes longer.
             cluster.runFor(10000, "failing join validation");
+
             assertTrue(cluster.clusterNodes.stream().allMatch(cn -> cn.getLastAppliedClusterState().version() == 0));
 
+            // Now clear the validation failures and verify that the cluster stabilizes.
             for (ClusterNode clusterNode : cluster.clusterNodes) {
                 clusterNode.extraJoinValidators.clear();
             }
@@ -1303,13 +1361,12 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
 
             cluster1.clusterNodes.add(newNode);
 
-            MockLogAppender mockAppender = new MockLogAppender();
-            mockAppender.addExpectation(
-                new MockLogAppender.SeenEventExpectation("test1", JoinHelper.class.getCanonicalName(), Level.INFO, "*failed to join*")
-            );
-            try (var ignored = mockAppender.capturing(JoinHelper.class)) {
+            try (var mockLog = MockLog.capture(JoinHelper.class)) {
+                mockLog.addExpectation(
+                    new MockLog.SeenEventExpectation("test1", JoinHelper.class.getCanonicalName(), Level.INFO, "*failed to join*")
+                );
                 cluster1.runFor(DEFAULT_STABILISATION_TIME, "failing join validation");
-                mockAppender.assertAllExpectationsMatched();
+                mockLog.assertAllExpectationsMatched();
             }
             assertEquals(0, newNode.getLastAppliedClusterState().version());
 
@@ -1342,59 +1399,59 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
             final var leader = cluster.getAnyLeader();
             leader.addActionBlock(TransportService.HANDSHAKE_ACTION_NAME);
 
-            final var mockAppender = new MockLogAppender();
-            mockAppender.addExpectation(
-                new MockLogAppender.SeenEventExpectation(
-                    "connect-back failure",
-                    Coordinator.class.getCanonicalName(),
-                    Level.WARN,
-                    "*received join request from ["
-                        + partitionedNode.getLocalNode().descriptionWithoutAttributes()
-                        + "] but could not connect back to the joining node"
-                )
-            );
-            mockAppender.addExpectation(new MockLogAppender.LoggingExpectation() {
-                boolean matched = false;
-
-                @Override
-                public void match(LogEvent event) {
-                    if (event.getLevel() != Level.INFO) {
-                        return;
-                    }
-                    if (event.getLoggerName().equals(JoinHelper.class.getCanonicalName()) == false) {
-                        return;
-                    }
-
-                    var cause = event.getThrown();
-                    if (cause == null) {
-                        return;
-                    }
-                    cause = cause.getCause();
-                    if (cause == null) {
-                        return;
-                    }
-                    if (Regex.simpleMatch(
-                        "* failure when opening connection back from ["
-                            + leader.getLocalNode().descriptionWithoutAttributes()
-                            + "] to ["
+            try (var mockLog = MockLog.capture(Coordinator.class, JoinHelper.class)) {
+                mockLog.addExpectation(
+                    new MockLog.SeenEventExpectation(
+                        "connect-back failure",
+                        Coordinator.class.getCanonicalName(),
+                        Level.WARN,
+                        "*received join request from ["
                             + partitionedNode.getLocalNode().descriptionWithoutAttributes()
-                            + "]",
-                        cause.getMessage()
-                    ) == false) {
-                        return;
-                    }
-                    if (cause.getStackTrace() != null && cause.getStackTrace().length != 0) {
-                        return;
-                    }
-                    matched = true;
-                }
+                            + "] but could not connect back to the joining node"
+                    )
+                );
+                mockLog.addExpectation(new MockLog.LoggingExpectation() {
+                    boolean matched = false;
 
-                @Override
-                public void assertMatched() {
-                    assertTrue(matched);
-                }
-            });
-            try (var ignored = mockAppender.capturing(Coordinator.class, JoinHelper.class)) {
+                    @Override
+                    public void match(LogEvent event) {
+                        if (event.getLevel() != Level.INFO) {
+                            return;
+                        }
+                        if (event.getLoggerName().equals(JoinHelper.class.getCanonicalName()) == false) {
+                            return;
+                        }
+
+                        var cause = event.getThrown();
+                        if (cause == null) {
+                            return;
+                        }
+                        cause = cause.getCause();
+                        if (cause == null) {
+                            return;
+                        }
+                        if (Regex.simpleMatch(
+                            "* failure when opening connection back from ["
+                                + leader.getLocalNode().descriptionWithoutAttributes()
+                                + "] to ["
+                                + partitionedNode.getLocalNode().descriptionWithoutAttributes()
+                                + "]",
+                            cause.getMessage()
+                        ) == false) {
+                            return;
+                        }
+                        if (cause.getStackTrace() != null && cause.getStackTrace().length != 0) {
+                            return;
+                        }
+                        matched = true;
+                    }
+
+                    @Override
+                    public void assertMatched() {
+                        assertTrue(matched);
+                    }
+                });
+
                 cluster.runFor(
                     // This expects 8 tasks to be executed after PeerFinder handling wakeup:
                     //
@@ -1410,32 +1467,10 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
                     defaultMillis(DISCOVERY_FIND_PEERS_INTERVAL_SETTING) + 8 * DEFAULT_DELAY_VARIABILITY,
                     "allowing time for join attempt"
                 );
-                mockAppender.assertAllExpectationsMatched();
+                mockLog.assertAllExpectationsMatched();
             }
 
             leader.clearActionBlocks();
-        }
-    }
-
-    public void testDiscoveryUsesNodesFromLastClusterState() {
-        try (Cluster cluster = new Cluster(randomIntBetween(3, 5))) {
-            cluster.runRandomly();
-            cluster.stabilise();
-
-            final ClusterNode partitionedNode = cluster.getAnyNode();
-            if (randomBoolean()) {
-                logger.info("--> blackholing {}", partitionedNode);
-                partitionedNode.blackhole();
-            } else {
-                logger.info("--> disconnecting {}", partitionedNode);
-                partitionedNode.disconnect();
-            }
-            cluster.setEmptySeedHostsList();
-            cluster.stabilise();
-
-            partitionedNode.heal();
-            cluster.runRandomly(false, true, EXTREME_DELAY_VARIABILITY);
-            cluster.stabilise();
         }
     }
 
@@ -1555,7 +1590,7 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
 
         @Override
         public TransportVersion getMinimalSupportedVersion() {
-            return TransportVersion.ZERO;
+            return TransportVersions.ZERO;
         }
 
         @Override
@@ -1614,6 +1649,13 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
         value = "org.elasticsearch.cluster.coordination.ClusterFormationFailureHelper:WARN"
     )
     public void testLogsWarningPeriodicallyIfClusterNotFormed() {
+        testLogsWarningPeriodicallyIfClusterNotFormed(
+            "master not discovered or elected yet, an election requires at least 2 nodes with ids from [",
+            nodeId -> "*have only discovered non-quorum *" + nodeId + "*discovery will continue*"
+        );
+    }
+
+    protected void testLogsWarningPeriodicallyIfClusterNotFormed(String expectedMessageStart, UnaryOperator<String> discoveryMessageFn) {
         final long warningDelayMillis;
         final Settings settings;
         if (randomBoolean()) {
@@ -1649,18 +1691,14 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
             }
 
             for (int i = scaledRandomIntBetween(1, 10); i >= 0; i--) {
-                final MockLogAppender mockLogAppender = new MockLogAppender();
-                try (var ignored = mockLogAppender.capturing(ClusterFormationFailureHelper.class)) {
-                    mockLogAppender.addExpectation(new MockLogAppender.LoggingExpectation() {
+                try (var mockLog = MockLog.capture(ClusterFormationFailureHelper.class)) {
+                    mockLog.addExpectation(new MockLog.LoggingExpectation() {
                         final Set<DiscoveryNode> nodesLogged = new HashSet<>();
 
                         @Override
                         public void match(LogEvent event) {
                             final String message = event.getMessage().getFormattedMessage();
-                            assertThat(
-                                message,
-                                startsWith("master not discovered or elected yet, an election requires at least 2 nodes with ids from [")
-                            );
+                            assertThat(message, startsWith(expectedMessageStart));
 
                             final List<ClusterNode> matchingNodes = cluster.clusterNodes.stream()
                                 .filter(
@@ -1671,13 +1709,7 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
                                 .toList();
                             assertThat(matchingNodes, hasSize(1));
 
-                            assertTrue(
-                                message,
-                                Regex.simpleMatch(
-                                    "*have only discovered non-quorum *" + matchingNodes.get(0).toString() + "*discovery will continue*",
-                                    message
-                                )
-                            );
+                            assertTrue(message, Regex.simpleMatch(discoveryMessageFn.apply(matchingNodes.get(0).toString()), message));
 
                             nodesLogged.add(matchingNodes.get(0).getLocalNode());
                         }
@@ -1692,7 +1724,7 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
                         }
                     });
                     cluster.runFor(warningDelayMillis + DEFAULT_DELAY_VARIABILITY, "waiting for warning to be emitted");
-                    mockLogAppender.assertAllExpectationsMatched();
+                    mockLog.assertAllExpectationsMatched();
                 }
             }
 
@@ -1727,15 +1759,20 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
             cluster.stabilise();
 
             for (int i = scaledRandomIntBetween(1, 10); i >= 0; i--) {
-                final MockLogAppender mockLogAppender = new MockLogAppender();
-                try (var ignored = mockLogAppender.capturing(Coordinator.class)) {
-                    mockLogAppender.addExpectation(new MockLogAppender.LoggingExpectation() {
+                try (var mockLog = MockLog.capture(Coordinator.class)) {
+                    mockLog.addExpectation(new MockLog.LoggingExpectation() {
                         String loggedClusterUuid;
 
                         @Override
                         public void match(LogEvent event) {
                             final String message = event.getMessage().getFormattedMessage();
-                            assertThat(message, startsWith("This node is a fully-formed single-node cluster with cluster UUID"));
+                            assertThat(
+                                message,
+                                allOf(
+                                    startsWith("This node is a fully-formed single-node cluster with cluster UUID"),
+                                    containsString(ReferenceDocs.FORMING_SINGLE_NODE_CLUSTERS.toString())
+                                )
+                            );
                             loggedClusterUuid = (String) event.getMessage().getParameters()[0];
                         }
 
@@ -1746,7 +1783,7 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
                         }
                     });
                     cluster.runFor(warningDelayMillis + DEFAULT_DELAY_VARIABILITY, "waiting for warning to be emitted");
-                    mockLogAppender.assertAllExpectationsMatched();
+                    mockLog.assertAllExpectationsMatched();
                 }
             }
         }
@@ -1771,11 +1808,10 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
             cluster.stabilise();
             final ClusterNode brokenNode = cluster.getAnyNodeExcept(cluster.getAnyLeader());
 
-            final MockLogAppender mockLogAppender = new MockLogAppender();
-            try (var ignored = mockLogAppender.capturing(Coordinator.CoordinatorPublication.class, LagDetector.class)) {
+            try (var mockLog = MockLog.capture(Coordinator.CoordinatorPublication.class, LagDetector.class)) {
 
-                mockLogAppender.addExpectation(
-                    new MockLogAppender.SeenEventExpectation(
+                mockLog.addExpectation(
+                    new MockLog.SeenEventExpectation(
                         "publication info message",
                         Coordinator.CoordinatorPublication.class.getCanonicalName(),
                         Level.INFO,
@@ -1787,8 +1823,8 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
                     )
                 );
 
-                mockLogAppender.addExpectation(
-                    new MockLogAppender.SeenEventExpectation(
+                mockLog.addExpectation(
+                    new MockLog.SeenEventExpectation(
                         "publication warning",
                         Coordinator.CoordinatorPublication.class.getCanonicalName(),
                         Level.WARN,
@@ -1800,8 +1836,8 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
                     )
                 );
 
-                mockLogAppender.addExpectation(
-                    new MockLogAppender.SeenEventExpectation(
+                mockLog.addExpectation(
+                    new MockLog.SeenEventExpectation(
                         "lag warning",
                         LagDetector.class.getCanonicalName(),
                         Level.WARN,
@@ -1812,8 +1848,8 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
                     )
                 );
 
-                mockLogAppender.addExpectation(
-                    new MockLogAppender.SeenEventExpectation(
+                mockLog.addExpectation(
+                    new MockLog.SeenEventExpectation(
                         "hot threads from lagging node",
                         LagDetector.class.getCanonicalName(),
                         Level.DEBUG,
@@ -1848,7 +1884,7 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
                     "waiting for messages to be emitted"
                 );
 
-                mockLogAppender.assertAllExpectationsMatched();
+                mockLog.assertAllExpectationsMatched();
             }
         }
     }
@@ -1888,31 +1924,23 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
             final Coordinator coordinator = cluster.getAnyLeader().coordinator;
             final ClusterState currentState = coordinator.getLastAcceptedState();
 
-            Set<CoordinationMetadata.VotingConfigExclusion> newVotingConfigExclusion1 = new HashSet<>() {
-                {
-                    add(
-                        new CoordinationMetadata.VotingConfigExclusion(
-                            "resolvableNodeId",
-                            CoordinationMetadata.VotingConfigExclusion.MISSING_VALUE_MARKER
-                        )
-                    );
-                }
-            };
+            Set<CoordinationMetadata.VotingConfigExclusion> newVotingConfigExclusion1 = Set.of(
+                new CoordinationMetadata.VotingConfigExclusion(
+                    "resolvableNodeId",
+                    CoordinationMetadata.VotingConfigExclusion.MISSING_VALUE_MARKER
+                )
+            );
 
             ClusterState newState1 = buildNewClusterStateWithVotingConfigExclusion(currentState, newVotingConfigExclusion1);
 
             assertFalse(Coordinator.validVotingConfigExclusionState(newState1));
 
-            Set<CoordinationMetadata.VotingConfigExclusion> newVotingConfigExclusion2 = new HashSet<>() {
-                {
-                    add(
-                        new CoordinationMetadata.VotingConfigExclusion(
-                            CoordinationMetadata.VotingConfigExclusion.MISSING_VALUE_MARKER,
-                            "resolvableNodeName"
-                        )
-                    );
-                }
-            };
+            Set<CoordinationMetadata.VotingConfigExclusion> newVotingConfigExclusion2 = Set.of(
+                new CoordinationMetadata.VotingConfigExclusion(
+                    CoordinationMetadata.VotingConfigExclusion.MISSING_VALUE_MARKER,
+                    "resolvableNodeName"
+                )
+            );
 
             ClusterState newState2 = buildNewClusterStateWithVotingConfigExclusion(currentState, newVotingConfigExclusion2);
 
@@ -1937,20 +1965,145 @@ public class CoordinatorTests extends AbstractCoordinatorTestCase {
         }
     }
 
+    public void testElectionSchedulingAfterDiscoveryOutage() {
+        try (
+            Cluster cluster = new Cluster(
+                3,
+                true,
+                Settings.builder()
+                    .put(ELECTION_MAX_TIMEOUT_SETTING.getKey(), TimeValue.timeValueMinutes(10))
+                    .put(ELECTION_BACK_OFF_TIME_SETTING.getKey(), TimeValue.timeValueMinutes(1))
+                    .build()
+            )
+        ) {
+            cluster.runRandomly();
+            // must allow extra time for stabilisation due to enthusiastic backoff settings
+            cluster.stabilise(DEFAULT_STABILISATION_TIME + TimeValue.timeValueMinutes(20).millis());
+
+            final long followerCheckMillis = defaultMillis(FOLLOWER_CHECK_INTERVAL_SETTING) + 2 * DEFAULT_DELAY_VARIABILITY;
+            final long leaderCheckMillis = defaultMillis(LEADER_CHECK_INTERVAL_SETTING) + 2 * DEFAULT_DELAY_VARIABILITY;
+            final long discoveryMillis = defaultMillis(DISCOVERY_FIND_PEERS_INTERVAL_SETTING) + 2 * DEFAULT_DELAY_VARIABILITY;
+
+            final long minOutageMillis =
+                // Allow long enough for the leader to stand down
+                followerCheckMillis * defaultInt(FOLLOWER_CHECK_RETRY_COUNT_SETTING) + DEFAULT_CLUSTER_STATE_UPDATE_DELAY
+                // and then for the followers to detect the leader failure
+                    + leaderCheckMillis * defaultInt(LEADER_CHECK_RETRY_COUNT_SETTING)
+                    // and then long enough for discovery to stop working
+                    + discoveryMillis;
+
+            final var leader = cluster.getAnyLeader();
+
+            // This test is checking for a potential bug where an active election scheduler would remain active, repeatedly failing and
+            // backing off, while not even being able to discover a quorum of nodes. In that situation when the discovery problem is
+            // resolved it can take far too long for the next election to occur because of the backoff.
+
+            if (randomBoolean()) {
+                // STEP 1 (optional): get the cluster into a state where all the election schedulers are active:
+                logger.info("--> blocking key actions until cluster falls apart");
+                leader.addActionBlock(FollowersChecker.FOLLOWER_CHECK_ACTION_NAME);
+                for (ClusterNode clusterNode : cluster.clusterNodes) {
+                    clusterNode.addActionBlock(StatefulPreVoteCollector.REQUEST_PRE_VOTE_ACTION_NAME);
+                }
+                cluster.runFor(
+                    randomLongBetween(minOutageMillis, TimeValue.timeValueMinutes(2).millis()),
+                    "simulate extended election failure"
+                );
+                assertTrue(
+                    cluster.clusterNodes.stream()
+                        .map(n -> n.coordinator)
+                        .allMatch(c -> c.getMode() == CANDIDATE && c.electionSchedulerActive())
+                );
+            }
+
+            // STEP 2: now block discovery:
+            logger.info("--> blocking discovery");
+            for (ClusterNode clusterNode : cluster.clusterNodes) {
+                clusterNode.clearActionBlocks();
+                clusterNode.disconnect();
+                for (ClusterNode otherNode : cluster.clusterNodes) {
+                    clusterNode.transportService.disconnectFromNode(otherNode.getLocalNode());
+                }
+            }
+            cluster.runFor(
+                randomLongBetween(minOutageMillis, TimeValue.timeValueHours(2).millis()),
+                "simulate extended discovery problems"
+            );
+            assertTrue(
+                cluster.clusterNodes.stream()
+                    .map(n -> n.coordinator)
+                    .allMatch(
+                        c -> c.getMode() == CANDIDATE
+                            && c.electionSchedulerActive() == false
+                            && c.getFoundPeers().iterator().hasNext() == false
+                    )
+            );
+
+            // STEP 3: now heal the discovery problem, fix elections (on one node only to avoid election clashes), and see that the cluster
+            // stabilises immediately:
+            logger.info("--> healing discovery and permitting elections on [{}]", leader);
+            for (ClusterNode clusterNode : cluster.clusterNodes) {
+                clusterNode.heal();
+                if (clusterNode != leader) {
+                    clusterNode.addActionBlock(StatefulPreVoteCollector.REQUEST_PRE_VOTE_ACTION_NAME);
+                }
+            }
+            cluster.stabilise(
+                // Pinging all peers once should be enough to discover the other nodes
+                defaultMillis(DISCOVERY_FIND_PEERS_INTERVAL_SETTING)
+                    // Then wait for an election to be scheduled
+                    + defaultMillis(ELECTION_INITIAL_TIMEOUT_SETTING)
+                    // Allow two round-trips for pre-voting and voting
+                    + 4 * DEFAULT_DELAY_VARIABILITY
+                    // Then a commit of the new leader's first cluster state
+                    + DEFAULT_CLUSTER_STATE_UPDATE_DELAY
+                    // Then the remaining node may experience a disconnect (see comment in PeerFinder#closePeers) for which it is
+                    // removed from the cluster, and its fault detection must also detect its removal
+                    + Math.max(
+                        DEFAULT_CLUSTER_STATE_UPDATE_DELAY,
+                        defaultMillis(LEADER_CHECK_TIMEOUT_SETTING) * LEADER_CHECK_RETRY_COUNT_SETTING.get(Settings.EMPTY)
+                    )
+                    // then it does another round of discovery
+                    + defaultMillis(DISCOVERY_FIND_PEERS_INTERVAL_SETTING)
+                    // and finally it joins the master
+                    + DEFAULT_CLUSTER_STATE_UPDATE_DELAY
+            );
+
+            cluster.clusterNodes.forEach(ClusterNode::clearActionBlocks);
+        }
+    }
+
+    public void testElectionWithSlowPublication() {
+        final var delayedActions = new HashSet<>();
+        try (Cluster cluster = new Cluster(7, true, Settings.EMPTY) {
+            @Override
+            protected long transportDelayMillis(String actionName) {
+                return delayedActions.contains(actionName) ? between(1000, 2000) : 0;
+            }
+        }) {
+            cluster.runRandomly();
+            cluster.stabilise();
+            final var leader = cluster.getAnyLeader();
+
+            logger.info("--> marking leader [{}] as blackholed and adding action delays", leader);
+            delayedActions.add(PublicationTransportHandler.PUBLISH_STATE_ACTION_NAME);
+            delayedActions.add(FollowersChecker.FOLLOWER_CHECK_ACTION_NAME);
+            leader.blackhole();
+            cluster.stabilise();
+            delayedActions.clear();
+        }
+    }
+
     private ClusterState buildNewClusterStateWithVotingConfigExclusion(
         ClusterState currentState,
         Set<CoordinationMetadata.VotingConfigExclusion> newVotingConfigExclusion
     ) {
         DiscoveryNodes newNodes = DiscoveryNodes.builder(currentState.nodes())
             .add(
-                new DiscoveryNode(
-                    "resolvableNodeName",
-                    "resolvableNodeId",
-                    buildNewFakeTransportAddress(),
-                    emptyMap(),
-                    Set.of(DiscoveryNodeRole.MASTER_ROLE),
-                    Version.CURRENT
-                )
+                DiscoveryNodeUtils.builder("resolvableNodeId")
+                    .name("resolvableNodeName")
+                    .roles(Set.of(DiscoveryNodeRole.MASTER_ROLE))
+                    .build()
             )
             .build();
 

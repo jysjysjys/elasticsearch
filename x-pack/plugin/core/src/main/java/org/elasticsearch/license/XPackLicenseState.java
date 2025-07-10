@@ -58,7 +58,10 @@ public class XPackLicenseState {
         messages.put(XPackField.DEPRECATION, new String[] { "Deprecation APIs are disabled" });
         messages.put(XPackField.UPGRADE, new String[] { "Upgrade API is disabled" });
         messages.put(XPackField.SQL, new String[] { "SQL support is disabled" });
-        messages.put(XPackField.ENTERPRISE_SEARCH, new String[] { "Search Applications and behavioral analytics will be disabled" });
+        messages.put(
+            XPackField.ENTERPRISE_SEARCH,
+            new String[] { "Search Applications, query rules and behavioral analytics will be disabled" }
+        );
         messages.put(
             XPackField.ROLLUP,
             new String[] {
@@ -81,6 +84,7 @@ public class XPackLicenseState {
                 "The CCR monitoring endpoint will be blocked",
                 "Existing follower indices will continue to replicate data" }
         );
+        messages.put(XPackField.REDACT_PROCESSOR, new String[] { "Executing a redact processor in an ingest pipeline will fail." });
         EXPIRATION_MESSAGES = Collections.unmodifiableMap(messages);
     }
 
@@ -101,6 +105,8 @@ public class XPackLicenseState {
         messages.put(XPackField.SQL, XPackLicenseState::sqlAcknowledgementMessages);
         messages.put(XPackField.CCR, XPackLicenseState::ccrAcknowledgementMessages);
         messages.put(XPackField.ENTERPRISE_SEARCH, XPackLicenseState::enterpriseSearchAcknowledgementMessages);
+        messages.put(XPackField.REDACT_PROCESSOR, XPackLicenseState::redactProcessorAcknowledgementMessages);
+        messages.put(XPackField.ESQL, XPackLicenseState::esqlAcknowledgementMessages);
         ACKNOWLEDGMENT_MESSAGES = Collections.unmodifiableMap(messages);
     }
 
@@ -220,10 +226,38 @@ public class XPackLicenseState {
             case STANDARD:
             case GOLD:
                 switch (currentMode) {
-                    case TRIAL:
                     case PLATINUM:
+                        return new String[] {
+                            "Search Applications and behavioral analytics will be disabled.",
+                            "Elastic Web crawler will be disabled.",
+                            "Connector clients require at least a platinum license." };
+                    case TRIAL:
                     case ENTERPRISE:
-                        return new String[] { "Search Applications and behavioral analytics will be disabled" };
+                        return new String[] {
+                            "Search Applications and behavioral analytics will be disabled.",
+                            "Query rules will be disabled.",
+                            "Elastic Web crawler will be disabled.",
+                            "Connector clients require at least a platinum license." };
+                }
+                break;
+        }
+        return Strings.EMPTY_ARRAY;
+    }
+
+    private static String[] esqlAcknowledgementMessages(OperationMode currentMode, OperationMode newMode) {
+        /*
+         * Provide an acknowledgement warning to customers that downgrade from Trial or Enterprise to a lower
+         * license level (Basic, Standard, Gold or Premium) that they will no longer be able to do CCS in ES|QL.
+         */
+        switch (newMode) {
+            case BASIC:
+            case STANDARD:
+            case GOLD:
+            case PLATINUM:
+                switch (currentMode) {
+                    case TRIAL:
+                    case ENTERPRISE:
+                        return new String[] { "ES|QL cross-cluster search will be disabled." };
                 }
                 break;
         }
@@ -300,6 +334,22 @@ public class XPackLicenseState {
                         // so CCR will be disabled
                         return new String[] { "Cross-Cluster Replication will be disabled" };
                 }
+        }
+        return Strings.EMPTY_ARRAY;
+    }
+
+    private static String[] redactProcessorAcknowledgementMessages(OperationMode currentMode, OperationMode newMode) {
+        switch (newMode) {
+            case BASIC:
+            case STANDARD:
+            case GOLD:
+                switch (currentMode) {
+                    case TRIAL:
+                    case PLATINUM:
+                    case ENTERPRISE:
+                        return new String[] { "Redact ingest pipeline processors will be disabled" };
+                }
+                break;
         }
         return Strings.EMPTY_ARRAY;
     }

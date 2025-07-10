@@ -1,15 +1,18 @@
 /*
  * Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
- * or more contributor license agreements. Licensed under the Elastic License
- * 2.0 and the Server Side Public License, v 1; you may not use this file except
- * in compliance with, at your election, the Elastic License 2.0 or the Server
- * Side Public License, v 1.
+ * or more contributor license agreements. Licensed under the "Elastic License
+ * 2.0", the "GNU Affero General Public License v3.0 only", and the "Server Side
+ * Public License v 1"; you may not use this file except in compliance with, at
+ * your election, the "Elastic License 2.0", the "GNU Affero General Public
+ * License v3.0 only", or the "Server Side Public License, v 1".
  */
 
 package org.elasticsearch.ingest;
 
 import org.elasticsearch.ElasticsearchParseException;
+import org.elasticsearch.cluster.metadata.ProjectId;
 import org.elasticsearch.core.Nullable;
+import org.elasticsearch.features.NodeFeature;
 import org.elasticsearch.script.ScriptService;
 
 import java.util.Arrays;
@@ -17,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
 import java.util.function.LongSupplier;
+import java.util.function.Predicate;
 
 /**
  * A pipeline is a list of {@link Processor} instances grouped under a unique id.
@@ -28,6 +32,8 @@ public final class Pipeline {
     public static final String VERSION_KEY = "version";
     public static final String ON_FAILURE_KEY = "on_failure";
     public static final String META_KEY = "_meta";
+    public static final String FIELD_ACCESS_PATTERN = "field_access_pattern";
+    public static final String DEPRECATED_KEY = "deprecated";
 
     private final String id;
     @Nullable
@@ -37,8 +43,11 @@ public final class Pipeline {
     @Nullable
     private final Map<String, Object> metadata;
     private final CompoundProcessor compoundProcessor;
-    private final IngestMetric metrics;
+    private final IngestPipelineMetric metrics;
     private final LongSupplier relativeTimeProvider;
+    private final IngestPipelineFieldAccessPattern fieldAccessPattern;
+    @Nullable
+    private final Boolean deprecated;
 
     public Pipeline(
         String id,
@@ -47,7 +56,19 @@ public final class Pipeline {
         @Nullable Map<String, Object> metadata,
         CompoundProcessor compoundProcessor
     ) {
-        this(id, description, version, metadata, compoundProcessor, System::nanoTime);
+        this(id, description, version, metadata, compoundProcessor, IngestPipelineFieldAccessPattern.CLASSIC, null);
+    }
+
+    public Pipeline(
+        String id,
+        @Nullable String description,
+        @Nullable Integer version,
+        @Nullable Map<String, Object> metadata,
+        CompoundProcessor compoundProcessor,
+        IngestPipelineFieldAccessPattern fieldAccessPattern,
+        @Nullable Boolean deprecated
+    ) {
+        this(id, description, version, metadata, compoundProcessor, System::nanoTime, fieldAccessPattern, deprecated);
     }
 
     // package private for testing
@@ -57,33 +78,74 @@ public final class Pipeline {
         @Nullable Integer version,
         @Nullable Map<String, Object> metadata,
         CompoundProcessor compoundProcessor,
-        LongSupplier relativeTimeProvider
+        LongSupplier relativeTimeProvider,
+        IngestPipelineFieldAccessPattern fieldAccessPattern,
+        @Nullable Boolean deprecated
     ) {
         this.id = id;
         this.description = description;
         this.metadata = metadata;
         this.compoundProcessor = compoundProcessor;
         this.version = version;
-        this.metrics = new IngestMetric();
+        this.metrics = new IngestPipelineMetric();
         this.relativeTimeProvider = relativeTimeProvider;
+        this.fieldAccessPattern = fieldAccessPattern;
+        this.deprecated = deprecated;
+    }
+
+    /**
+     * @deprecated To be removed after Logstash has transitioned fully to the logstash-bridge library. Functionality will be relocated to
+     * there. Use {@link Pipeline#create(String, Map, Map, ScriptService, ProjectId, Predicate)} instead.
+     */
+    @Deprecated
+    public static Pipeline create(
+        String id,
+        Map<String, Object> config,
+        Map<String, Processor.Factory> processorFactories,
+        ScriptService scriptService,
+        ProjectId projectId
+    ) throws Exception {
+        return create(id, config, processorFactories, scriptService, projectId, IngestService::locallySupportedIngestFeature);
     }
 
     public static Pipeline create(
         String id,
         Map<String, Object> config,
         Map<String, Processor.Factory> processorFactories,
-        ScriptService scriptService
+        ScriptService scriptService,
+        ProjectId projectId,
+        Predicate<NodeFeature> hasFeature
     ) throws Exception {
         String description = ConfigurationUtils.readOptionalStringProperty(null, null, config, DESCRIPTION_KEY);
         Integer version = ConfigurationUtils.readIntProperty(null, null, config, VERSION_KEY, null);
         Map<String, Object> metadata = ConfigurationUtils.readOptionalMap(null, null, config, META_KEY);
+        Boolean deprecated = ConfigurationUtils.readOptionalBooleanProperty(null, null, config, DEPRECATED_KEY);
+        String fieldAccessPatternRaw = ConfigurationUtils.readOptionalStringProperty(null, null, config, FIELD_ACCESS_PATTERN);
+        if (fieldAccessPatternRaw != null && hasFeature.test(IngestService.FIELD_ACCESS_PATTERN) == false) {
+            throw new ElasticsearchParseException(
+                "pipeline [" + id + "] doesn't support one or more provided configuration parameters [field_access_pattern]"
+            );
+        } else if (fieldAccessPatternRaw != null && IngestPipelineFieldAccessPattern.isValidAccessPattern(fieldAccessPatternRaw) == false) {
+            throw new ElasticsearchParseException(
+                "pipeline [" + id + "] doesn't support value of [" + fieldAccessPatternRaw + "] for parameter [field_access_pattern]"
+            );
+        }
+        IngestPipelineFieldAccessPattern accessPattern = fieldAccessPatternRaw == null
+            ? IngestPipelineFieldAccessPattern.CLASSIC
+            : IngestPipelineFieldAccessPattern.getAccessPattern(fieldAccessPatternRaw);
         List<Map<String, Object>> processorConfigs = ConfigurationUtils.readList(null, null, config, PROCESSORS_KEY);
-        List<Processor> processors = ConfigurationUtils.readProcessorConfigs(processorConfigs, scriptService, processorFactories);
+        List<Processor> processors = ConfigurationUtils.readProcessorConfigs(
+            processorConfigs,
+            scriptService,
+            processorFactories,
+            projectId
+        );
         List<Map<String, Object>> onFailureProcessorConfigs = ConfigurationUtils.readOptionalList(null, null, config, ON_FAILURE_KEY);
         List<Processor> onFailureProcessors = ConfigurationUtils.readProcessorConfigs(
             onFailureProcessorConfigs,
             scriptService,
-            processorFactories
+            processorFactories,
+            projectId
         );
         if (config.isEmpty() == false) {
             throw new ElasticsearchParseException(
@@ -97,7 +159,7 @@ public final class Pipeline {
             throw new ElasticsearchParseException("pipeline [" + id + "] cannot have an empty on_failure option defined");
         }
         CompoundProcessor compoundProcessor = new CompoundProcessor(false, processors, onFailureProcessors);
-        return new Pipeline(id, description, version, metadata, compoundProcessor);
+        return new Pipeline(id, description, version, metadata, compoundProcessor, accessPattern, deprecated);
     }
 
     /**
@@ -108,12 +170,6 @@ public final class Pipeline {
      */
     public void execute(IngestDocument ingestDocument, BiConsumer<IngestDocument, Exception> handler) {
         final long startTimeInNanos = relativeTimeProvider.getAsLong();
-        /*
-         * Our assumption is that the listener passed to the processor is only ever called once. However, there is no way to enforce
-         * that in all processors and all of the code that they call. If the listener is called more than once it causes problems
-         * such as the metrics being wrong. The listenerHasBeenCalled variable is used to make sure that the code in the listener
-         * is only executed once.
-         */
         metrics.preIngest();
         compoundProcessor.execute(ingestDocument, (result, e) -> {
             long ingestTimeInNanos = relativeTimeProvider.getAsLong() - startTimeInNanos;
@@ -121,6 +177,9 @@ public final class Pipeline {
             if (e != null) {
                 metrics.ingestFailed();
             }
+            // Reset the terminate status now that pipeline execution is complete (if this was executed as part of another pipeline, the
+            // outer pipeline should continue):
+            ingestDocument.resetTerminate();
             handler.accept(result, e);
         });
     }
@@ -188,7 +247,22 @@ public final class Pipeline {
     /**
      * The metrics associated with this pipeline.
      */
-    public IngestMetric getMetrics() {
+    public IngestPipelineMetric getMetrics() {
         return metrics;
+    }
+
+    /**
+     * The field access pattern that the pipeline will use to retrieve and set fields on documents.
+     */
+    public IngestPipelineFieldAccessPattern getFieldAccessPattern() {
+        return fieldAccessPattern;
+    }
+
+    public Boolean getDeprecated() {
+        return deprecated;
+    }
+
+    public boolean isDeprecated() {
+        return Boolean.TRUE.equals(deprecated);
     }
 }
